@@ -18,6 +18,7 @@
 
 #include "exec/parquet_builder.h"
 #include "exec/pipeline/pipeline_driver_executor.h"
+#include "exec/workgroup/work_group.h"
 
 namespace starrocks::pipeline {
 
@@ -31,7 +32,7 @@ Status IcebergTableSinkOperator::prepare(RuntimeState* state) {
 void IcebergTableSinkOperator::close(RuntimeState* state) {
     for (const auto& writer : _partition_writers) {
         if (!writer.second->closed()) {
-            writer.second->close(state);
+            WARN_IF_ERROR(writer.second->close(state), "close writer failed");
         }
     }
     Operator::close(state);
@@ -62,12 +63,13 @@ bool IcebergTableSinkOperator::is_finished() const {
 
 Status IcebergTableSinkOperator::set_finishing(RuntimeState* state) {
     if (_num_sinkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        state->exec_env()->wg_driver_executor()->report_audit_statistics(state->query_ctx(), state->fragment_ctx());
+        state->fragment_ctx()->workgroup()->executors()->driver_executor()->report_audit_statistics(
+                state->query_ctx(), state->fragment_ctx());
     }
 
     for (const auto& writer : _partition_writers) {
         if (!writer.second->closed()) {
-            writer.second->close(state);
+            WARN_IF_ERROR(writer.second->close(state), "close writer failed");
         }
     }
 
@@ -98,7 +100,7 @@ Status IcebergTableSinkOperator::push_chunk(RuntimeState* state, const ChunkPtr&
     if (_iceberg_table->is_unpartitioned_table()) {
         if (_partition_writers.empty()) {
             tableInfo.partition_location = _iceberg_table_data_location;
-            auto writer = std::make_unique<RollingAsyncParquetWriter>(tableInfo, _output_expr, _common_metrics.get(),
+            auto writer = std::make_unique<RollingAsyncParquetWriter>(tableInfo, _output_expr, _unique_metrics.get(),
                                                                       add_iceberg_commit_info, state, _driver_sequence);
             RETURN_IF_ERROR(writer->init());
             _partition_writers.insert({ICEBERG_UNPARTITIONED_TABLE_LOCATION, std::move(writer)});
@@ -134,7 +136,7 @@ Status IcebergTableSinkOperator::push_chunk(RuntimeState* state, const ChunkPtr&
         auto partition_writer = _partition_writers.find(partition_location);
         if (partition_writer == _partition_writers.end()) {
             tableInfo.partition_location = partition_location;
-            auto writer = std::make_unique<RollingAsyncParquetWriter>(tableInfo, _output_expr, _common_metrics.get(),
+            auto writer = std::make_unique<RollingAsyncParquetWriter>(tableInfo, _output_expr, _unique_metrics.get(),
                                                                       add_iceberg_commit_info, state, _driver_sequence);
             RETURN_IF_ERROR(writer->init());
             _partition_writers.insert({partition_location, std::move(writer)});
@@ -265,11 +267,13 @@ void calculate_column_stats(const std::shared_ptr<::parquet::FileMetaData>& meta
             auto column_chunk_meta = meta->RowGroup(rg_idx)->ColumnChunk(col_idx);
             column_sizes[field_id] += column_chunk_meta->total_compressed_size();
 
-            auto column_stat = column_chunk_meta->statistics();
-            if (rg_idx == 0) {
-                column_stats[field_id] = column_stat;
-            } else {
-                merge_stats(column_stats[field_id], column_stat);
+            if (column_chunk_meta->is_stats_set()) {
+                auto column_stat = column_chunk_meta->statistics();
+                if (!column_stats.count(field_id)) {
+                    column_stats[field_id] = column_stat;
+                } else {
+                    merge_stats(column_stats[field_id], column_stat);
+                }
             }
         }
     }
@@ -300,6 +304,10 @@ void calculate_column_stats(const std::shared_ptr<::parquet::FileMetaData>& meta
 
 void IcebergTableSinkOperator::add_iceberg_commit_info(starrocks::parquet::AsyncFileWriter* writer,
                                                        RuntimeState* state) {
+    if (writer->metadata() == nullptr) {
+        return;
+    }
+
     TIcebergColumnStats iceberg_column_stats;
     calculate_column_stats(writer->metadata(), iceberg_column_stats);
 
@@ -310,7 +318,7 @@ void IcebergTableSinkOperator::add_iceberg_commit_info(starrocks::parquet::Async
     iceberg_data_file.__set_record_count(writer->metadata()->num_rows());
     iceberg_data_file.__set_file_size_in_bytes(writer->file_size());
     std::vector<int64_t> split_offsets;
-    writer->split_offsets(split_offsets);
+    (void)writer->split_offsets(split_offsets);
     iceberg_data_file.__set_split_offsets(split_offsets);
     iceberg_data_file.__set_column_stats(iceberg_column_stats);
 

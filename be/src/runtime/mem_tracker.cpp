@@ -36,13 +36,7 @@
 
 #include <utility>
 
-#include "gutil/strings/substitute.h"
-#include "util/debug_util.h"
-#include "util/mem_info.h"
-#include "util/pretty_printer.h"
-#include "util/stack_util.h"
-#include "util/starrocks_metrics.h"
-#include "util/uid_util.h"
+#include "service/backend_options.h"
 
 namespace starrocks {
 
@@ -142,6 +136,7 @@ Status MemTracker::check_mem_limit(const std::string& msg) const {
 std::string MemTracker::err_msg(const std::string& msg) const {
     std::stringstream str;
     str << "Memory of " << label() << " exceed limit. " << msg << " ";
+    str << "Backend: " << BackendOptions::get_localhost() << ", ";
     str << "Used: " << consumption() << ", Limit: " << limit() << ". ";
     switch (type()) {
     case MemTracker::NO_SET:

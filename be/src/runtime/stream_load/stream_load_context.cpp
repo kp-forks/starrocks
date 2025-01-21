@@ -36,6 +36,8 @@
 
 #include <fmt/format.h>
 
+#include "agent/master_info.h"
+
 namespace starrocks {
 
 std::string StreamLoadContext::to_resp_json(const std::string& txn_op, const Status& st) const {
@@ -59,8 +61,9 @@ std::string StreamLoadContext::to_resp_json(const std::string& txn_op, const Sta
         break;
     }
     // msg
+    std::string_view msg = st.message();
     writer.Key("Message");
-    writer.String(st.get_error_msg().c_str());
+    writer.String(msg.data(), msg.size());
 
     if (st.ok()) {
         // label
@@ -125,6 +128,10 @@ std::string StreamLoadContext::to_resp_json(const std::string& txn_op, const Sta
 }
 
 std::string StreamLoadContext::to_json() const {
+    if (enable_batch_write) {
+        return to_merge_commit_json();
+    }
+
     rapidjson::StringBuffer s;
     rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(s);
 
@@ -160,7 +167,8 @@ std::string StreamLoadContext::to_json() const {
     if (status.ok()) {
         writer.String("OK");
     } else {
-        writer.String(status.get_error_msg().c_str());
+        std::string_view msg = status.message();
+        writer.String(msg.data(), msg.size());
     }
     // number_load_rows
     writer.Key("NumberTotalRows");
@@ -194,6 +202,57 @@ std::string StreamLoadContext::to_json() const {
         writer.Key("RejectedRecordPath");
         writer.String(rejected_record_path.c_str());
     }
+
+    writer.EndObject();
+    return s.GetString();
+}
+
+std::string StreamLoadContext::to_merge_commit_json() const {
+    rapidjson::StringBuffer s;
+    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(s);
+
+    writer.StartObject();
+    writer.Key("TxnId");
+    writer.Int64(txn_id);
+    writer.Key("Label");
+    writer.String(batch_write_label.c_str());
+
+    writer.Key("Status");
+    switch (status.code()) {
+    case TStatusCode::OK:
+        writer.String("Success");
+        break;
+    default:
+        writer.String("Fail");
+        break;
+    }
+    writer.Key("Message");
+    if (status.ok()) {
+        writer.String("OK");
+    } else {
+        std::string_view msg = status.message();
+        writer.String(msg.data(), msg.size());
+    }
+    writer.Key("RequestId");
+    writer.String(label.c_str());
+
+    writer.Key("LoadBytes");
+    writer.Int64(receive_bytes);
+    writer.Key("LoadTimeMs");
+    writer.Int64(load_cost_nanos / 1000000);
+    writer.Key("ReadDataTimeMs");
+    writer.Int64(mc_read_data_cost_nanos / 1000000);
+    writer.Key("PendingTimeMs");
+    writer.Int64(mc_pending_cost_nanos / 1000000);
+    writer.Key("WaitPlanTimeMs");
+    writer.Int64(mc_wait_plan_cost_nanos / 1000000);
+    writer.Key("WriteDataTimeMs");
+    writer.Int64(mc_write_data_cost_nanos / 1000000);
+    writer.Key("WaitFinishTimeMs");
+    writer.Int64(mc_wait_finish_cost_nanos / 1000000);
+    writer.Key("LeftMergeTimeMs");
+    writer.Int64(mc_left_merge_time_nanos / 1000000);
+
     writer.EndObject();
     return s.GetString();
 }
@@ -241,6 +300,12 @@ std::string StreamLoadContext::brief(bool detail) const {
 bool StreamLoadContext::check_and_set_http_limiter(ConcurrentLimiter* limiter) {
     _http_limiter_guard = std::make_unique<ConcurrentLimiterGuard>();
     return _http_limiter_guard->set_limiter(limiter);
+}
+
+void StreamLoadContext::release(StreamLoadContext* context) {
+    if (context != nullptr && context->unref()) {
+        delete context;
+    }
 }
 
 } // namespace starrocks

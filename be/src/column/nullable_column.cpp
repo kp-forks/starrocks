@@ -58,6 +58,12 @@ size_t NullableColumn::null_count(size_t offset, size_t count) const {
     return SIMD::count_nonzero(_null_column->raw_data() + offset, count);
 }
 
+void NullableColumn::remove_first_n_values(size_t count) {
+    _data_column->remove_first_n_values(count);
+    _null_column->remove_first_n_values(count);
+    _has_null = SIMD::contain_nonzero(_null_column->get_data(), 0, _null_column->size());
+}
+
 void NullableColumn::append_datum(const Datum& datum) {
     if (datum.is_null()) {
         append_nulls(1);
@@ -109,7 +115,7 @@ void NullableColumn::append_selective(const Column& src, const uint32_t* indexes
     DCHECK_EQ(_null_column->size(), _data_column->size());
 }
 
-void NullableColumn::append_value_multiple_times(const Column& src, uint32_t index, uint32_t size, bool deep_copy) {
+void NullableColumn::append_value_multiple_times(const Column& src, uint32_t index, uint32_t size) {
     DCHECK_EQ(_null_column->size(), _data_column->size());
     size_t orig_size = _null_column->size();
     if (src.only_null()) {
@@ -119,18 +125,18 @@ void NullableColumn::append_value_multiple_times(const Column& src, uint32_t ind
 
         DCHECK_EQ(src_column._null_column->size(), src_column._data_column->size());
 
-        _null_column->append_value_multiple_times(*src_column._null_column, index, size, deep_copy);
-        _data_column->append_value_multiple_times(*src_column._data_column, index, size, deep_copy);
+        _null_column->append_value_multiple_times(*src_column._null_column, index, size);
+        _data_column->append_value_multiple_times(*src_column._data_column, index, size);
         _has_null = _has_null || SIMD::contain_nonzero(_null_column->get_data(), orig_size, size);
     } else {
         _null_column->resize(orig_size + size);
-        _data_column->append_value_multiple_times(src, index, size, deep_copy);
+        _data_column->append_value_multiple_times(src, index, size);
     }
 
     DCHECK_EQ(_null_column->size(), _data_column->size());
 }
 
-ColumnPtr NullableColumn::replicate(const std::vector<uint32_t>& offsets) {
+ColumnPtr NullableColumn::replicate(const Buffer<uint32_t>& offsets) {
     return NullableColumn::create(this->_data_column->replicate(offsets),
                                   std::dynamic_pointer_cast<NullColumn>(this->_null_column->replicate(offsets)));
 }
@@ -146,27 +152,27 @@ bool NullableColumn::append_nulls(size_t count) {
     return true;
 }
 
-bool NullableColumn::append_strings(const Buffer<Slice>& strs) {
-    if (_data_column->append_strings(strs)) {
-        null_column_data().resize(_null_column->size() + strs.size(), 0);
+bool NullableColumn::append_strings(const Slice* data, size_t size) {
+    if (_data_column->append_strings(data, size)) {
+        null_column_data().resize(_null_column->size() + size, 0);
         return true;
     }
     DCHECK_EQ(_null_column->size(), _data_column->size());
     return false;
 }
 
-bool NullableColumn::append_strings_overflow(const Buffer<Slice>& strs, size_t max_length) {
-    if (_data_column->append_strings_overflow(strs, max_length)) {
-        null_column_data().resize(_null_column->size() + strs.size(), 0);
+bool NullableColumn::append_strings_overflow(const Slice* data, size_t size, size_t max_length) {
+    if (_data_column->append_strings_overflow(data, size, max_length)) {
+        null_column_data().resize(_null_column->size() + size, 0);
         return true;
     }
     DCHECK_EQ(_null_column->size(), _data_column->size());
     return false;
 }
 
-bool NullableColumn::append_continuous_strings(const Buffer<Slice>& strs) {
-    if (_data_column->append_continuous_strings(strs)) {
-        null_column_data().resize(_null_column->size() + strs.size(), 0);
+bool NullableColumn::append_continuous_strings(const Slice* data, size_t size) {
+    if (_data_column->append_continuous_strings(data, size)) {
+        null_column_data().resize(_null_column->size() + size, 0);
         return true;
     }
     DCHECK_EQ(_null_column->size(), _data_column->size());
@@ -341,7 +347,7 @@ void NullableColumn::fnv_hash(uint32_t* hash, uint32_t from, uint32_t to) const 
         return;
     }
 
-    auto null_data = _null_column->get_data();
+    const auto& null_data = _null_column->get_data();
     uint32_t value = 0x9e3779b9;
     while (from < to) {
         uint32_t new_from = from + 1;
@@ -366,7 +372,7 @@ void NullableColumn::crc32_hash(uint32_t* hash, uint32_t from, uint32_t to) cons
         return;
     }
 
-    auto null_data = _null_column->get_data();
+    const auto& null_data = _null_column->get_data();
     // NULL is treat as 0 when crc32 hash for data loading
     static const int INT_VALUE = 0;
     while (from < to) {
@@ -391,12 +397,11 @@ int64_t NullableColumn::xor_checksum(uint32_t from, uint32_t to) const {
     }
 
     int64_t xor_checksum = 0;
-    size_t num = _null_column->size();
     uint8_t* src = _null_column->get_data().data();
 
     // The XOR of NullableColumn
     // XOR all the 8-bit integers one by one
-    for (size_t i = 0; i < num; ++i) {
+    for (size_t i = from; i < to; ++i) {
         xor_checksum ^= src[i];
         if (!src[i]) {
             xor_checksum ^= _data_column->xor_checksum(static_cast<uint32_t>(i), static_cast<uint32_t>(i + 1));
@@ -405,11 +410,12 @@ int64_t NullableColumn::xor_checksum(uint32_t from, uint32_t to) const {
     return xor_checksum;
 }
 
-void NullableColumn::put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx) const {
+void NullableColumn::put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx, bool is_binary_protocol) const {
     if (_has_null && _null_column->get_data()[idx]) {
-        buf->push_null();
+        buf->push_null(is_binary_protocol);
     } else {
-        _data_column->put_mysql_row_buffer(buf, idx);
+        buf->update_field_pos();
+        _data_column->put_mysql_row_buffer(buf, idx, is_binary_protocol);
     }
 }
 
@@ -424,9 +430,7 @@ void NullableColumn::check_or_die() const {
 }
 
 StatusOr<ColumnPtr> NullableColumn::upgrade_if_overflow() {
-    if (_null_column->capacity_limit_reached()) {
-        return Status::InternalError("Size of NullableColumn exceed the limit");
-    }
+    RETURN_IF_ERROR(_null_column->capacity_limit_reached());
 
     return upgrade_helper_func(&_data_column);
 }

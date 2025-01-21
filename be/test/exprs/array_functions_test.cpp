@@ -20,6 +20,7 @@
 #include <unordered_set>
 
 #include "column/const_column.h"
+#include "column/map_column.h"
 #include "exprs/mock_vectorized_expr.h"
 
 namespace starrocks {
@@ -61,13 +62,15 @@ protected:
     TypeDescriptor TYPE_ARRAY_DATE = array_type(TYPE_DATE);
     TypeDescriptor TYPE_ARRAY_DATETIME = array_type(TYPE_DATETIME);
 
-private:
+protected:
     template <typename CppType>
     void _check_array(const Buffer<CppType>& check_values, const DatumArray& value);
 
     template <typename CppType>
     void _check_array_nullable(const Buffer<CppType>& check_values, const Buffer<uint8_t>& nulls,
                                const DatumArray& value);
+
+    FunctionContext _ctx;
 };
 
 template <typename CppType>
@@ -159,16 +162,11 @@ TEST_F(ArrayFunctionsTest, array_length) {
         auto result = ArrayFunctions::array_length(nullptr, {c}).value();
         EXPECT_EQ(5, result->size());
 
-        ASSERT_FALSE(result->get(0).is_null());
-        ASSERT_TRUE(result->get(1).is_null());
-        ASSERT_FALSE(result->get(2).is_null());
-        ASSERT_FALSE(result->get(3).is_null());
-        ASSERT_FALSE(result->get(4).is_null());
-
-        EXPECT_EQ(0, result->get(0).get_int32());
-        EXPECT_EQ(1, result->get(2).get_int32());
-        EXPECT_EQ(1, result->get(3).get_int32());
-        EXPECT_EQ(2, result->get(4).get_int32());
+        EXPECT_EQ(result->get(0), Datum(0));
+        EXPECT_EQ(result->get(1), kNullDatum);
+        EXPECT_EQ(result->get(2), Datum(1));
+        EXPECT_EQ(result->get(3), Datum(1));
+        EXPECT_EQ(result->get(4), Datum(2));
     }
 
     // []
@@ -264,6 +262,63 @@ TEST_F(ArrayFunctionsTest, array_length) {
 }
 
 // NOLINTNEXTLINE
+TEST_F(ArrayFunctionsTest, array_cum_sum) {
+    // []
+    // NULL
+    // [NULL]
+    // [1]
+    // [1,2,3,4,5]
+    // [null,null,1, null]
+    {
+        auto c = ColumnHelper::create_column(TYPE_ARRAY_BIGINT, true);
+        c->append_datum(Datum(DatumArray{}));
+        c->append_datum(Datum());
+        c->append_datum(Datum(DatumArray{Datum()}));
+        c->append_datum(Datum(DatumArray{Datum((int64_t)1)}));
+        c->append_datum(Datum(DatumArray{Datum((int64_t)1), Datum((int64_t)2), Datum((int64_t)3), Datum((int64_t)4),
+                                         Datum((int64_t)5)}));
+        c->append_datum(Datum(DatumArray{Datum(), Datum(), Datum((int64_t)1), Datum()}));
+
+        auto result = ArrayFunctions::array_cum_sum_bigint(nullptr, {c}).value();
+        EXPECT_EQ(6, result->size());
+
+        ASSERT_FALSE(result->get(0).is_null());
+        ASSERT_TRUE(result->get(1).is_null());
+        ASSERT_FALSE(result->get(2).is_null());
+        ASSERT_FALSE(result->get(3).is_null());
+        ASSERT_FALSE(result->get(4).is_null());
+        ASSERT_FALSE(result->get(5).is_null());
+
+        EXPECT_EQ(0, result->get(0).get_array().size());
+        EXPECT_EQ(1, result->get(2).get_array().size());
+        EXPECT_EQ(1, result->get(3).get_array().size());
+        EXPECT_EQ(5, result->get(4).get_array().size());
+        EXPECT_EQ(4, result->get(5).get_array().size());
+    }
+
+    // [] only null
+    {
+        auto c = ColumnHelper::create_const_null_column(3);
+
+        auto result = ArrayFunctions::array_cum_sum_bigint(nullptr, {c}).value();
+        EXPECT_EQ(3, result->size());
+        EXPECT_TRUE(result->is_null(0));
+        EXPECT_TRUE(result->is_null(1));
+        EXPECT_TRUE(result->is_null(2));
+    }
+
+    // [] only const
+    {
+        auto src_column = ColumnHelper::create_column(TYPE_ARRAY_BIGINT, true);
+        src_column->append_datum(Datum(DatumArray{Datum((int64_t)1), Datum((int64_t)2), Datum((int64_t)3),
+                                                  Datum((int64_t)4), Datum((int64_t)5)}));
+        auto c = std::make_shared<ConstColumn>(src_column, 3);
+        auto result = ArrayFunctions::array_cum_sum_bigint(nullptr, {c}).value();
+        EXPECT_EQ(3, result->size());
+    }
+}
+
+// NOLINTNEXTLINE
 TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
     // array_contains([], 1)
     {
@@ -273,7 +328,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_INT), false, true, 0);
         target->append_datum(Datum{(int32_t)1});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
     }
@@ -285,7 +340,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), false, true, 0);
         target->append_datum(Datum{"abc"});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
     }
@@ -297,7 +352,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_ARRAY_INT), false);
         target->append_datum(Datum(DatumArray{Datum{(int32_t)1}}));
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
     }
@@ -309,7 +364,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_ARRAY_INT), false);
         target->append_datum(Datum(DatumArray{}));
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
     }
@@ -330,7 +385,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         target->append_datum(Datum((int32_t)1));
         target->resize(4);
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -355,7 +410,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         target->append_datum(Datum{});
         target->append_datum(Datum((int32_t)3));
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -377,7 +432,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         auto target = ColumnHelper::create_const_null_column(1);
         target->resize(4);
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -389,7 +444,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
-        result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -401,7 +456,7 @@ TEST_F(ArrayFunctionsTest, array_contains_empty_array) {
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
-        result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -444,7 +499,7 @@ TEST_F(ArrayFunctionsTest, array_contains_no_null) {
         target->append_datum(Datum{(int8_t)0});
         target->append_datum(Datum{(int8_t)1});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(8, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -472,7 +527,7 @@ TEST_F(ArrayFunctionsTest, array_contains_no_null) {
         target->append_datum(Datum{3});
         target->resize(5);
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(5, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -515,7 +570,7 @@ TEST_F(ArrayFunctionsTest, array_contains_no_null) {
         target->append_datum(DatumArray{"r", "i"});
         target->append_datum(DatumArray{"i", "s"});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(10, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(1, result->get(1).get_int8());
@@ -546,7 +601,7 @@ TEST_F(ArrayFunctionsTest, array_contains_has_null_element) {
         target->append_datum(Datum{"abc"});
         target->append_datum(Datum{"abc"});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_EQ(1, result->get(1).get_int8());
@@ -564,7 +619,7 @@ TEST_F(ArrayFunctionsTest, array_contains_has_null_target) {
         // const-null column.
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), true, true, 0);
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
     }
@@ -582,7 +637,7 @@ TEST_F(ArrayFunctionsTest, array_contains_has_null_target) {
         target->append_datum(Datum((int8_t)4));
         target->append_datum(Datum());
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(1, result->get(0).get_int8());
         EXPECT_EQ(0, result->get(1).get_int8());
@@ -602,7 +657,7 @@ TEST_F(ArrayFunctionsTest, array_contains_has_null_element_and_target) {
         // const-null column.
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), true, true, 0);
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(2, result->size());
         EXPECT_EQ(1, result->get(0).get_int8());
         EXPECT_EQ(1, result->get(1).get_int8());
@@ -627,7 +682,7 @@ TEST_F(ArrayFunctionsTest, array_contains_has_null_element_and_target) {
         target->append_datum(DatumArray{1, 2});
         target->append_datum(Datum());
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(5, result->size());
         EXPECT_EQ(1, result->get(0).get_int8());
         EXPECT_EQ(1, result->get(1).get_int8());
@@ -653,7 +708,7 @@ TEST_F(ArrayFunctionsTest, array_contains_nullable_array) {
         target->append_datum(Datum("c"));
         target->append_datum(Datum("c"));
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_TRUE(result->get(1).is_null());
@@ -673,7 +728,7 @@ TEST_F(ArrayFunctionsTest, array_contains_nullable_array) {
         target->append_datum(DatumArray{"c"});
         target->append_datum(DatumArray{"c"});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int8());
         EXPECT_TRUE(result->get(1).is_null());
@@ -693,7 +748,7 @@ TEST_F(ArrayFunctionsTest, array_contains_nullable_array) {
         target->append_datum(DatumArray{"a"});
         target->append_datum(DatumArray{Datum()});
 
-        auto result = ArrayFunctions::array_contains(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_contains_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_TRUE(result->get(0).is_null());
         EXPECT_TRUE(result->get(1).is_null());
@@ -783,7 +838,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_INT), false, true, 0);
         target->append_datum(Datum{(int32_t)1});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
     }
@@ -795,7 +850,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), false, true, 0);
         target->append_datum(Datum{"abc"});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
     }
@@ -807,7 +862,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_ARRAY_INT), false);
         target->append_datum(Datum(DatumArray{Datum{(int32_t)1}}));
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
     }
@@ -819,7 +874,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_ARRAY_INT), false);
         target->append_datum(Datum(DatumArray{}));
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
     }
@@ -840,7 +895,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         target->append_datum(Datum((int32_t)1));
         target->resize(4);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -865,7 +920,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         target->append_datum(Datum{});
         target->append_datum(Datum((int32_t)3));
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -887,7 +942,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         auto target = ColumnHelper::create_const_null_column(1);
         target->resize(4);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -899,7 +954,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
-        result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -911,7 +966,7 @@ TEST_F(ArrayFunctionsTest, array_position_empty_array) {
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
         array->append_datum(Datum(DatumArray{}));
-        result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(4, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -954,7 +1009,7 @@ TEST_F(ArrayFunctionsTest, array_position_no_null) {
         target->append_datum(Datum{(int8_t)0});
         target->append_datum(Datum{(int8_t)1});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(8, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -982,7 +1037,7 @@ TEST_F(ArrayFunctionsTest, array_position_no_null) {
         target->append_datum(Datum{3});
         target->resize(5);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(5, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -1025,7 +1080,7 @@ TEST_F(ArrayFunctionsTest, array_position_no_null) {
         target->append_datum(DatumArray{"r", "i"});
         target->append_datum(DatumArray{"i", "s"});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(10, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1056,7 +1111,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_element) {
         target->append_datum(Datum{"abc"});
         target->append_datum(Datum{"abc"});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1074,7 +1129,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_target) {
         // const-null column.
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), true, true, 0);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(1, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
     }
@@ -1092,7 +1147,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_target) {
         target->append_datum(Datum((int8_t)4));
         target->append_datum(Datum());
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(2, result->get(0).get_int32());
         EXPECT_EQ(0, result->get(1).get_int32());
@@ -1112,7 +1167,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_element_and_target) {
         // const-null column.
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), true, true, 1);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(2, result->size());
         EXPECT_EQ(1, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1137,7 +1192,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_element_and_target) {
         target->append_datum(DatumArray{1, 2});
         target->append_datum(Datum());
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(5, result->size());
         EXPECT_EQ(1, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1158,7 +1213,7 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_element_and_target_and_check_
         // const-null column.
         auto target = ColumnHelper::create_column(TypeDescriptor(TYPE_VARCHAR), true, true, 0);
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(2, result->size());
         EXPECT_EQ(1, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1183,7 +1238,8 @@ TEST_F(ArrayFunctionsTest, array_position_has_null_element_and_target_and_check_
         target->append_datum(DatumArray{1, 2});
         target->append_datum(Datum());
 
-        auto result = ColumnHelper::cast_to<TYPE_INT>(ArrayFunctions::array_position(nullptr, {array, target}).value());
+        auto result = ColumnHelper::cast_to<TYPE_INT>(
+                ArrayFunctions::array_position_generic(nullptr, {array, target}).value());
         EXPECT_EQ(5, result->size());
         EXPECT_EQ(1, result->get(0).get_int32());
         EXPECT_EQ(1, result->get(1).get_int32());
@@ -1209,7 +1265,7 @@ TEST_F(ArrayFunctionsTest, array_position_nullable_array) {
         target->append_datum(Datum("c"));
         target->append_datum(Datum("c"));
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_TRUE(result->get(1).is_null());
@@ -1229,7 +1285,7 @@ TEST_F(ArrayFunctionsTest, array_position_nullable_array) {
         target->append_datum(DatumArray{"c"});
         target->append_datum(DatumArray{"c"});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_EQ(0, result->get(0).get_int32());
         EXPECT_TRUE(result->get(1).is_null());
@@ -1249,7 +1305,7 @@ TEST_F(ArrayFunctionsTest, array_position_nullable_array) {
         target->append_datum(DatumArray{"a"});
         target->append_datum(DatumArray{Datum()});
 
-        auto result = ArrayFunctions::array_position(nullptr, {array, target}).value();
+        auto result = ArrayFunctions::array_position_generic(nullptr, {array, target}).value();
         EXPECT_EQ(3, result->size());
         EXPECT_TRUE(result->get(0).is_null());
         EXPECT_TRUE(result->get(1).is_null());
@@ -3867,7 +3923,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_tinyint_with_nullable) {
     src_column2->append_datum(DatumArray{(int8_t)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_TINYINT> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -3899,7 +3957,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_tinyint) {
     src_column2->append_datum(DatumArray{(int8_t)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_TINYINT> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(!dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -3929,7 +3989,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_bigint_with_nullable) {
     src_column2->append_datum(DatumArray{(int64_t)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_BIGINT> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -3961,7 +4023,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_bigint) {
     src_column2->append_datum(DatumArray{(int64_t)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_BIGINT> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(!dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -3991,7 +4055,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_double_with_nullable) {
     src_column2->append_datum(DatumArray{(double)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_DOUBLE> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -4023,7 +4089,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_double) {
     src_column2->append_datum(DatumArray{(double)4, Datum()});
 
     ArrayOverlap<LogicalType::TYPE_DOUBLE> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(!dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -4053,7 +4121,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_varchar_with_nullable) {
     src_column2->append_datum(DatumArray{Slice("4"), Datum()});
 
     ArrayOverlap<LogicalType::TYPE_VARCHAR> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -4085,7 +4155,9 @@ TEST_F(ArrayFunctionsTest, array_overlap_varchar) {
     src_column2->append_datum(DatumArray{Slice("4"), Datum()});
 
     ArrayOverlap<LogicalType::TYPE_VARCHAR> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2}).value();
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
     ASSERT_TRUE(!dest_column->is_nullable());
     ASSERT_EQ(dest_column->size(), 5);
@@ -4106,9 +4178,11 @@ TEST_F(ArrayFunctionsTest, array_overlap_with_onlynull) {
     auto src_column2 = ColumnHelper::create_const_null_column(1);
 
     ArrayOverlap<LogicalType::TYPE_TINYINT> overlap;
-    auto dest_column = overlap.process(nullptr, {src_column, src_column2});
+    ASSERT_TRUE(overlap.prepare(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
+    auto dest_column = overlap.process(&_ctx, {src_column, src_column2});
+    ASSERT_TRUE(overlap.close(&_ctx, FunctionContext::FunctionStateScope::FRAGMENT_LOCAL).ok());
 
-    ASSERT_TRUE(dest_column->only_null());
+    ASSERT_TRUE(dest_column->get()->only_null());
 }
 
 TEST_F(ArrayFunctionsTest, array_intersect_int) {
@@ -4301,6 +4375,22 @@ TEST_F(ArrayFunctionsTest, array_join_string) {
     ASSERT_EQ(Slice("44__33__22__112"), dest_column->get(2).get_slice());
 }
 
+TEST_F(ArrayFunctionsTest, array_concat_ws) {
+    auto src_column = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+    src_column->append_datum(DatumArray{"352", "66", "4325"});
+    src_column->append_datum(DatumArray{"235", "99", "8", "43251"});
+    src_column->append_datum(DatumArray{"44", "33", "22", "112"});
+
+    Slice sep_str("__");
+    auto sep_column = ColumnHelper::create_const_column<LogicalType::TYPE_VARCHAR>(sep_str, 3);
+
+    ColumnPtr dest_column = ArrayFunctions::array_concat_ws(nullptr, {sep_column, src_column}).value();
+    ASSERT_EQ(dest_column->size(), 3);
+    ASSERT_EQ(Slice("352__66__4325"), dest_column->get(0).get_slice());
+    ASSERT_EQ(Slice("235__99__8__43251"), dest_column->get(1).get_slice());
+    ASSERT_EQ(Slice("44__33__22__112"), dest_column->get(2).get_slice());
+}
+
 // NOLINTNEXTLINE
 TEST_F(ArrayFunctionsTest, array_join_nullable_elements) {
     auto src_column = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
@@ -4325,6 +4415,22 @@ TEST_F(ArrayFunctionsTest, array_join_nullable_elements) {
     ASSERT_EQ(Slice("55__NULL__333__6666"), dest_column->get(0).get_slice());
     ASSERT_EQ(Slice("22__333__NULL__NULL"), dest_column->get(1).get_slice());
     ASSERT_EQ(Slice("NULL__NULL__NULL__NULL"), dest_column->get(2).get_slice());
+}
+
+TEST_F(ArrayFunctionsTest, array_concat_ws_nullable_elements) {
+    auto src_column = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+    src_column->append_datum(DatumArray{"55", Datum(), "333", "6666"});
+    src_column->append_datum(DatumArray{"22", "333", Datum(), Datum()});
+    src_column->append_datum(DatumArray{Datum(), Datum(), Datum(), Datum()});
+
+    Slice sep_str("__");
+    auto sep_column = ColumnHelper::create_const_column<LogicalType::TYPE_VARCHAR>(sep_str, 3);
+
+    ColumnPtr dest_column = ArrayFunctions::array_concat_ws(nullptr, {sep_column, src_column}).value();
+    ASSERT_EQ(dest_column->size(), 3);
+    ASSERT_EQ(Slice("55__333__6666"), dest_column->get(0).get_slice());
+    ASSERT_EQ(Slice("22__333"), dest_column->get(1).get_slice());
+    ASSERT_EQ(Slice(""), dest_column->get(2).get_slice());
 }
 
 // NOLINTNEXTLINE
@@ -4353,6 +4459,22 @@ TEST_F(ArrayFunctionsTest, array_join_nullable_array) {
     ASSERT_EQ(Slice("NULL__NULL__NULL__NULL"), dest_column->get(2).get_slice());
 }
 
+TEST_F(ArrayFunctionsTest, array_concat_ws_nullable_array) {
+    auto src_column = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+    src_column->append_datum(DatumArray{"5", Datum(), "33", "666"});
+    src_column->append_datum(Datum());
+    src_column->append_datum(DatumArray{Datum(), Datum(), Datum(), Datum()});
+
+    Slice sep_str("__");
+    auto sep_column = ColumnHelper::create_const_column<LogicalType::TYPE_VARCHAR>(sep_str, 3);
+
+    ColumnPtr dest_column = ArrayFunctions::array_concat_ws(nullptr, {sep_column, src_column}).value();
+    ASSERT_EQ(dest_column->size(), 3);
+    ASSERT_EQ(Slice("5__33__666"), dest_column->get(0).get_slice());
+    ASSERT_TRUE(dest_column->get(1).is_null());
+    ASSERT_EQ(Slice(""), dest_column->get(2).get_slice());
+}
+
 // NOLINTNEXTLINE
 TEST_F(ArrayFunctionsTest, array_join_only_null) {
     auto src_column = ColumnHelper::create_const_null_column(3);
@@ -4370,6 +4492,19 @@ TEST_F(ArrayFunctionsTest, array_join_only_null) {
     ASSERT_TRUE(dest_column->get(2).is_null());
 
     dest_column = ArrayJoin::process(nullptr, {src_column, sep_column, null_column});
+    ASSERT_EQ(dest_column->size(), 3);
+    ASSERT_TRUE(dest_column->get(0).is_null());
+    ASSERT_TRUE(dest_column->get(1).is_null());
+    ASSERT_TRUE(dest_column->get(2).is_null());
+}
+
+TEST_F(ArrayFunctionsTest, array_concat_ws_only_null) {
+    auto src_column = ColumnHelper::create_const_null_column(3);
+
+    Slice sep_str("__");
+    auto sep_column = ColumnHelper::create_const_column<LogicalType::TYPE_VARCHAR>(sep_str, 3);
+
+    ColumnPtr dest_column = ArrayFunctions::array_concat_ws(nullptr, {sep_column, src_column}).value();
     ASSERT_EQ(dest_column->size(), 3);
     ASSERT_TRUE(dest_column->get(0).is_null());
     ASSERT_TRUE(dest_column->get(1).is_null());
@@ -4696,7 +4831,7 @@ TEST_F(ArrayFunctionsTest, array_distinct_only_null) {
         src_column = std::make_shared<ConstColumn>(src_column, 3);
         auto dest_column = ArrayDistinct<TYPE_VARCHAR>::process(nullptr, {src_column});
         ASSERT_EQ(dest_column->size(), 3);
-        ASSERT_STREQ(dest_column->debug_string().c_str(), "[['5','666','33'], ['5','666','33'], ['5','666','33']]");
+        ASSERT_STREQ(dest_column->debug_string().c_str(), "[['5','33','666'], ['5','33','666'], ['5','33','666']]");
     }
     // test normal
     {
@@ -4704,7 +4839,7 @@ TEST_F(ArrayFunctionsTest, array_distinct_only_null) {
         src_column->append_datum(DatumArray{"5", "5", "33", "666"});
         auto dest_column = ArrayDistinct<TYPE_VARCHAR>::process(nullptr, {src_column});
         ASSERT_EQ(dest_column->size(), 1);
-        ASSERT_STREQ(dest_column->debug_string().c_str(), "[['5','666','33']]");
+        ASSERT_STREQ(dest_column->debug_string().c_str(), "[['5','33','666']]");
     }
 }
 
@@ -5408,6 +5543,445 @@ TEST_F(ArrayFunctionsTest, array_match_only_null) {
         dest_column = ArrayMatch<false>::process(nullptr, {src_column});
         ASSERT_EQ(dest_column->size(), 3);
         ASSERT_TRUE(dest_column->get(0).get_int8());
+    }
+}
+// NOLINTNEXTLINE
+TEST_F(ArrayFunctionsTest, array_contains_seq) {
+    // array_contains_seq(["a", "b", "c"], ["c"])         -> 1
+    // array_contains_seq(NULL, ["c"])                    -> NULL
+    // array_contains_seq(["a", "b", "c"], NULL)          -> NULL
+    // array_contains_seq(["a", "b", NULL], NULL)         -> NULL
+    // array_contains_seq(["a", "b", NULL], ["a", NULL])  -> 0
+    // array_contains_seq(NULL, ["a", NULL])              -> NULL
+    // array_contains_seq(["a", "b", NULL], [NULL])       -> 1
+    // array_contains_seq(["a", "b", "c"], ["d"])         -> 0
+    // array_contains_seq(["a", "b", "c"], ["a", "d"])    -> 0
+    // array_contains_all(["a", "b", "c"], ["a", "c"])    -> 0
+    {
+        auto array = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+        array->append_datum(DatumArray{"a", "b", "c"});
+        array->append_datum(Datum());
+        array->append_datum(DatumArray{"a", "b", "c"});
+        array->append_datum(DatumArray{"a", "b", Datum()});
+        array->append_datum(DatumArray{"a", "b", Datum()});
+        array->append_datum(Datum());
+        array->append_datum(DatumArray{"a", "b", Datum()});
+        array->append_datum(DatumArray{"a", "b", "c"});
+        array->append_datum(DatumArray{"a", "b", "c"});
+        array->append_datum(DatumArray{"a", "b", "c"});
+
+        auto target = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+        target->append_datum(DatumArray{"c"});
+        target->append_datum(DatumArray{"c"});
+        target->append_datum(Datum());
+        target->append_datum(Datum());
+        target->append_datum(DatumArray{"a", Datum()});
+        target->append_datum(DatumArray{"a", Datum()});
+        target->append_datum(DatumArray{Datum()});
+        target->append_datum(DatumArray{"d"});
+        target->append_datum(DatumArray{"a", "d"});
+        target->append_datum(DatumArray{"a", "c"});
+
+        auto result = ArrayFunctions::array_contains_seq(nullptr, {array, target}).value();
+        EXPECT_EQ(10, result->size());
+        EXPECT_EQ(1, result->get(0).get_int8());
+        EXPECT_TRUE(result->get(1).is_null());
+        EXPECT_TRUE(result->get(2).is_null());
+        EXPECT_TRUE(result->get(3).is_null());
+        EXPECT_EQ(0, result->get(4).get_int8());
+        EXPECT_TRUE(result->get(5).is_null());
+        EXPECT_EQ(1, result->get(6).get_int8());
+        EXPECT_EQ(0, result->get(7).get_int8());
+        EXPECT_EQ(0, result->get(8).get_int8());
+        EXPECT_EQ(0, result->get(9).get_int8());
+    }
+
+    // array_contains_seq([["a"], ["b"]], [["c"]])
+    // array_contains_seq(["a","c"], [["c"]])
+    // array_contains_seq([["a", "b"], ["c"]], [["a", "b"]])
+    {
+        auto array = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, false);
+        array->append_datum(DatumArray{Datum(DatumArray{"a"}), Datum(DatumArray{"b"})});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "c"})});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "b"}), Datum(DatumArray{"c"})});
+
+        auto target = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, false);
+        target->append_datum(DatumArray{Datum(DatumArray{"c"})});
+        target->append_datum(DatumArray{Datum(DatumArray{"c"})});
+        target->append_datum(DatumArray{Datum(DatumArray{"a", "b"})});
+
+        auto result = ArrayFunctions::array_contains_seq(nullptr, {array, target}).value();
+        EXPECT_EQ(3, result->size());
+        EXPECT_EQ(0, result->get(0).get_int8());
+        EXPECT_EQ(0, result->get(1).get_int8());
+        EXPECT_EQ(1, result->get(2).get_int8());
+    }
+    // array_contains_seq([["a"], ["b"], [NULL]], [["c"]])
+    // array_contains_seq([["a","d","c"]], [["e"]])
+    // array_contains_seq([["a", "b"], ["c"]], [["a", "b"]])
+    {
+        auto array = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, true);
+        array->append_datum(DatumArray{Datum(DatumArray{"a"}), Datum(DatumArray{"b"}), Datum()});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "d", "c"})});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "b"}), Datum(DatumArray{"c"})});
+
+        auto target = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, false);
+        target->append_datum(DatumArray{Datum(DatumArray{"c"})});
+        target->append_datum(DatumArray{Datum(DatumArray{"e"})});
+        target->append_datum(DatumArray{Datum(DatumArray{"a", "b"})});
+
+        auto result = ArrayFunctions::array_contains_seq(nullptr, {array, target}).value();
+        EXPECT_EQ(3, result->size());
+        EXPECT_EQ(0, result->get(0).get_int8());
+        EXPECT_EQ(0, result->get(1).get_int8());
+        EXPECT_EQ(1, result->get(2).get_int8());
+    }
+    // array_contains_seq([["a"], ["b"]], [["c"], [NULL]])
+    // array_contains_seq([["a","d","c"]], [["e", NULL]])
+    // array_contains_seq([["a", "b"], ["c"]], [["a", "b"]])
+    {
+        auto array = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, false);
+        array->append_datum(DatumArray{Datum(DatumArray{"a"}), Datum(DatumArray{"b"})});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "d", "c"})});
+        array->append_datum(DatumArray{Datum(DatumArray{"a", "b"}), Datum(DatumArray{"c"})});
+
+        auto target = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_VARCHAR, true);
+        target->append_datum(DatumArray{Datum(DatumArray{"c"}), Datum()});
+        target->append_datum(DatumArray{Datum(DatumArray{"e"}), Datum()});
+        target->append_datum(DatumArray{Datum(DatumArray{"a", "b"})});
+
+        auto result = ArrayFunctions::array_contains_seq(nullptr, {array, target}).value();
+        EXPECT_EQ(3, result->size());
+        EXPECT_EQ(0, result->get(0).get_int8());
+        EXPECT_EQ(0, result->get(1).get_int8());
+        EXPECT_EQ(1, result->get(2).get_int8());
+    }
+}
+
+template <LogicalType Type>
+void array_repeat_test(Datum element_0, Datum element_1, Datum element_2, Datum element_null) {
+    {
+        using CppType = RunTimeCppType<Type>;
+
+        int32_t repeat_count_0 = (int32_t)1;
+        int32_t repeat_count_1 = (int32_t)-2;
+        int32_t repeat_count_2 = (int32_t)3;
+        Datum repeat_count_null;
+
+        // The normal case
+        {
+            ColumnPtr src_column = ColumnHelper::create_column(TypeDescriptor(Type), false, false, 0);
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_2);
+
+            auto repeat_count_column = Int32Column::create();
+            repeat_count_column->append(repeat_count_0);
+            repeat_count_column->append(repeat_count_1);
+            repeat_count_column->append(repeat_count_2);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_EQ(dest_column->get(0).get_array().size(), 1);
+            if (Type == TYPE_JSON) {
+                ASSERT_EQ(element_0.get_json()->get_slice(),
+                          dest_column->get(0).get_array()[0].get_json()->get_slice());
+                ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+                ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+                ASSERT_EQ(element_2.get_json()->get_slice(),
+                          dest_column->get(2).get_array()[0].get_json()->get_slice());
+                ASSERT_EQ(element_2.get_json()->get_slice(),
+                          dest_column->get(2).get_array()[1].get_json()->get_slice());
+                ASSERT_EQ(element_2.get_json()->get_slice(),
+                          dest_column->get(2).get_array()[2].get_json()->get_slice());
+            } else {
+                ASSERT_EQ(element_0.get<CppType>(), dest_column->get(0).get_array()[0].get<CppType>());
+                ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+                ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+                ASSERT_EQ(element_2.get<CppType>(), dest_column->get(2).get_array()[0].get<CppType>());
+                ASSERT_EQ(element_2.get<CppType>(), dest_column->get(2).get_array()[1].get<CppType>());
+                ASSERT_EQ(element_2.get<CppType>(), dest_column->get(2).get_array()[2].get<CppType>());
+            }
+        }
+
+        // The case for testing NullableColumn
+        {
+            ColumnPtr src_column = ColumnHelper::create_column(TypeDescriptor(Type), true, false, 0);
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_null);
+
+            auto repeat_count_column = NullableColumn::create(Int32Column::create(), NullColumn::create(0, DATUM_NULL));
+            repeat_count_column->append_datum(repeat_count_null);
+            repeat_count_column->append_datum(Datum(repeat_count_1));
+            repeat_count_column->append_datum(Datum(repeat_count_2));
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_TRUE(dest_column->get(0).is_null());
+            ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+            ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+            ASSERT_TRUE(dest_column->get(2).get_array()[0].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[1].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[2].is_null());
+        }
+
+        // The case for testing ConstColumn
+        {
+            size_t const_column_row_count = 2;
+
+            ColumnPtr src_column = ColumnHelper::create_column(TypeDescriptor(Type), false, true, 0);
+            for (int i = 0; i < const_column_row_count; i++) {
+                src_column->append_datum(element_0);
+            }
+
+            auto repeat_count_data_column = Int32Column::create();
+            repeat_count_data_column->append(repeat_count_0);
+            auto repeat_count_column = ConstColumn::create(std::move(repeat_count_data_column), const_column_row_count);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), const_column_row_count);
+            if (Type == TYPE_JSON) {
+                ASSERT_EQ(element_0.get_json()->get_slice(),
+                          dest_column->get(0).get_array()[0].get_json()->get_slice());
+                ASSERT_EQ(element_0.get_json()->get_slice(),
+                          dest_column->get(1).get_array()[0].get_json()->get_slice());
+            } else {
+                ASSERT_EQ(element_0.get<CppType>(), dest_column->get(0).get_array()[0].get<CppType>());
+                ASSERT_EQ(element_0.get<CppType>(), dest_column->get(1).get_array()[0].get<CppType>());
+            }
+        }
+    }
+}
+
+TEST_F(ArrayFunctionsTest, array_repeat) {
+    {
+        array_repeat_test<TYPE_INT>(Datum((int32_t)0), Datum((int32_t)1), Datum((int32_t)2), Datum());
+        array_repeat_test<TYPE_BIGINT>(Datum((int64_t)0), Datum((int64_t)1), Datum((int64_t)2), Datum());
+        array_repeat_test<TYPE_FLOAT>(Datum((float)0), Datum((float)0.1), Datum((float)0.2), Datum());
+        array_repeat_test<TYPE_DOUBLE>(Datum((double)0), Datum((double)0.1), Datum((double)0.2), Datum());
+        array_repeat_test<TYPE_DECIMALV2>(Datum(DecimalV2Value(std::string("0.0000000000"))),
+                                          Datum(DecimalV2Value(std::string("1.0000000000"))),
+                                          Datum(DecimalV2Value(std::string("2.0000000000"))), Datum());
+        array_repeat_test<TYPE_BOOLEAN>(Datum(true), (false), Datum(false), Datum());
+        array_repeat_test<TYPE_DATE>(DateValue::create(2020, 0, 0), DateValue::create(2021, 1, 1),
+                                     DateValue::create(2022, 2, 2), Datum());
+        array_repeat_test<TYPE_DATETIME>(TimestampValue::create(2020, 0, 0, 0, 0, 0),
+                                         TimestampValue::create(2021, 1, 1, 1, 1, 1),
+                                         TimestampValue::create(2022, 2, 2, 2, 2, 2), Datum());
+        array_repeat_test<TYPE_VARCHAR>(Datum(Slice("0")), Datum(Slice("1")), Datum(Slice("2")), Datum());
+        JsonValue json_element_0 = JsonValue::parse("{\"a\": 0}").value();
+        JsonValue json_element_1 = JsonValue::parse("{\"b\": 1}").value();
+        JsonValue json_element_2 = JsonValue::parse("{\"c\": 2}").value();
+        array_repeat_test<TYPE_JSON>(Datum(&json_element_0), Datum(&json_element_1), Datum(&json_element_2), Datum());
+    }
+}
+
+TEST_F(ArrayFunctionsTest, array_repeat_array) {
+    {
+        Datum element_0 = DatumArray{(int32_t)0};
+        Datum element_1 = DatumArray{Datum()};
+        Datum element_2 = DatumArray{Datum(), (int32_t)2};
+        Datum element_null;
+        int32_t repeat_count_0 = (int32_t)1;
+        int32_t repeat_count_1 = (int32_t)-2;
+        int32_t repeat_count_2 = (int32_t)3;
+        Datum repeat_count_null;
+
+        // The normal case
+        {
+            auto src_column = ColumnHelper::create_column(TYPE_ARRAY_INT, true);
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_2);
+
+            auto repeat_count_column = Int32Column::create();
+            repeat_count_column->append(repeat_count_0);
+            repeat_count_column->append(repeat_count_1);
+            repeat_count_column->append(repeat_count_2);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_EQ(dest_column->get(0).get_array().size(), 1);
+            _check_array<int32_t>({(int32_t)0}, dest_column->get(0).get_array()[0].get_array());
+            ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+            _check_array<int32_t>({}, dest_column->get(1).get_array());
+            ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+            ASSERT_TRUE(dest_column->get(2).get_array()[0].get_array()[0].is_null());
+            ASSERT_EQ((int32_t)2, dest_column->get(2).get_array()[0].get_array()[1].get_int32());
+            ASSERT_TRUE(dest_column->get(2).get_array()[1].get_array()[0].is_null());
+            ASSERT_EQ((int32_t)2, dest_column->get(2).get_array()[1].get_array()[1].get_int32());
+            ASSERT_TRUE(dest_column->get(2).get_array()[2].get_array()[0].is_null());
+            ASSERT_EQ((int32_t)2, dest_column->get(2).get_array()[2].get_array()[1].get_int32());
+        }
+
+        // The case for testing NullableColumn
+        {
+            auto src_column = ColumnHelper::create_column(TYPE_ARRAY_INT, true);
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_null);
+
+            auto repeat_count_column = NullableColumn::create(Int32Column::create(), NullColumn::create(0, DATUM_NULL));
+            repeat_count_column->append_datum(repeat_count_null);
+            repeat_count_column->append_datum(Datum(repeat_count_1));
+            repeat_count_column->append_datum(Datum(repeat_count_2));
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_TRUE(dest_column->get(0).is_null());
+            ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+            _check_array<int32_t>({}, dest_column->get(1).get_array());
+            ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+            ASSERT_TRUE(dest_column->get(2).get_array()[0].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[1].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[2].is_null());
+        }
+
+        // The case for testing ConstColumn
+        {
+            size_t const_column_row_count = 2;
+
+            auto src_data_column = ColumnHelper::create_column(TYPE_ARRAY_INT, true);
+            src_data_column->append_datum(element_0);
+            auto src_column = ConstColumn::create(std::move(src_data_column), const_column_row_count);
+
+            auto repeat_count_data_column = Int32Column::create();
+            repeat_count_data_column->append(repeat_count_0);
+            auto repeat_count_column = ConstColumn::create(std::move(repeat_count_data_column), const_column_row_count);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), const_column_row_count);
+            _check_array<int32_t>({(int32_t)0}, dest_column->get(0).get_array()[0].get_array());
+        }
+    }
+}
+
+TEST_F(ArrayFunctionsTest, array_repeat_map) {
+    {
+        DatumMap element_0;
+        DatumMap element_1;
+        DatumMap element_2;
+        Datum element_null;
+        int32_t repeat_count_0 = (int32_t)1;
+        int32_t repeat_count_1 = (int32_t)-2;
+        int32_t repeat_count_2 = (int32_t)3;
+        Datum repeat_count_null;
+        element_0[(int32_t)0] = (int32_t)0;
+        element_0[(int32_t)1] = (int32_t)11;
+        element_0[(int32_t)2] = (int32_t)22;
+        element_1[(int32_t)3] = (int32_t)33;
+        element_1[(int32_t)4] = (int32_t)44;
+        element_1[(int32_t)5] = (int32_t)55;
+        element_2[(int32_t)6] = (int32_t)66;
+        element_2[(int32_t)7] = (int32_t)77;
+        element_2[(int32_t)8] = (int32_t)88;
+
+        // The normal case
+        {
+            auto offsets = UInt32Column::create();
+            auto keys_data = Int32Column::create();
+            auto keys_null = NullColumn::create();
+            auto keys = NullableColumn::create(keys_data, keys_null);
+            auto values_data = Int32Column::create();
+            auto values_null = NullColumn::create();
+            auto values = NullableColumn::create(values_data, values_null);
+            auto src_column = MapColumn::create(keys, values, offsets);
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_2);
+
+            auto repeat_count_column = Int32Column::create();
+            repeat_count_column->append(repeat_count_0);
+            repeat_count_column->append(repeat_count_1);
+            repeat_count_column->append(repeat_count_2);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_EQ(dest_column->get(0).get_array().size(), repeat_count_0);
+            ASSERT_EQ(element_0.find(2)->second.get_int32(),
+                      dest_column->get(0).get_array()[0].get<DatumMap>().find(2)->second.get_int32());
+            ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+            _check_array<int32_t>({}, dest_column->get(1).get_array());
+            ASSERT_EQ(dest_column->get(2).get_array().size(), repeat_count_2);
+            ASSERT_EQ(element_2.find(8)->second.get_int32(),
+                      dest_column->get(2).get_array()[2].get<DatumMap>().find(8)->second.get_int32());
+        }
+
+        // The case for testing NullableColumn
+        {
+            auto offsets = UInt32Column::create();
+            auto keys_data = Int32Column::create();
+            auto keys_null = NullColumn::create();
+            auto keys = NullableColumn::create(keys_data, keys_null);
+            auto values_data = Int32Column::create();
+            auto values_null = NullColumn::create();
+            auto values = NullableColumn::create(values_data, values_null);
+            auto map_column = MapColumn::create(keys, values, offsets);
+            auto src_column = NullableColumn::create(std::move(map_column), NullColumn::create(0, DATUM_NULL));
+            src_column->append_datum(element_0);
+            src_column->append_datum(element_1);
+            src_column->append_datum(element_null);
+
+            auto count_column = NullableColumn::create(Int32Column::create(), NullColumn::create(0, DATUM_NULL));
+            count_column->append_datum(repeat_count_null);
+            count_column->append_datum(Datum(repeat_count_1));
+            count_column->append_datum(Datum(repeat_count_2));
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, count_column}).value();
+            ASSERT_EQ(dest_column->size(), 3);
+            ASSERT_TRUE(dest_column->get(0).is_null());
+            ASSERT_EQ(dest_column->get(1).get_array().size(), 0);
+            _check_array<int32_t>({}, dest_column->get(1).get_array());
+            ASSERT_EQ(dest_column->get(2).get_array().size(), 3);
+            ASSERT_TRUE(dest_column->get(2).get_array()[0].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[1].is_null());
+            ASSERT_TRUE(dest_column->get(2).get_array()[2].is_null());
+        }
+
+        // The case for testing ConstColumn
+        {
+            size_t const_column_row_count = 2;
+            auto offsets = UInt32Column::create();
+            auto keys_data = Int32Column::create();
+            auto keys_null = NullColumn::create();
+            auto keys = NullableColumn::create(keys_data, keys_null);
+            auto values_data = Int32Column::create();
+            auto values_null = NullColumn::create();
+            auto values = NullableColumn::create(values_data, values_null);
+            auto map_column = MapColumn::create(keys, values, offsets);
+            map_column->append_datum(element_0);
+            auto src_column = ConstColumn::create(std::move(map_column), const_column_row_count);
+
+            auto repeat_count_data_column = Int32Column::create();
+            repeat_count_data_column->append(repeat_count_0);
+            auto repeat_count_column = ConstColumn::create(std::move(repeat_count_data_column), const_column_row_count);
+
+            auto dest_column = ArrayFunctions::repeat(nullptr, {src_column, repeat_count_column}).value();
+            ASSERT_EQ(dest_column->size(), const_column_row_count);
+            ASSERT_EQ(element_0.find(2)->second.get_int32(),
+                      dest_column->get(0).get_array()[0].get<DatumMap>().find(2)->second.get_int32());
+            ASSERT_EQ(element_0.find(2)->second.get_int32(),
+                      dest_column->get(1).get_array()[0].get<DatumMap>().find(2)->second.get_int32());
+        }
+    }
+}
+
+TEST_F(ArrayFunctionsTest, array_flatten_int) {
+    // array_flatten(NULL): NULL
+    // array_flatten([[1, 2], [1, 4]]): [1,2,1,4]
+    // array_flatten([[1, 2], [3]]): [1,2,3]
+    {
+        auto array = ColumnHelper::create_column(TYPE_ARRAY_ARRAY_INT, true);
+        array->append_nulls(1);
+        array->append_datum(DatumArray{DatumArray{1, 2}, DatumArray{1, 4}});
+        array->append_datum(DatumArray{DatumArray{1, 2}, DatumArray{3}});
+
+        auto result = ArrayFunctions::array_flatten(nullptr, {array}).value();
+        EXPECT_EQ(3, result->size());
+        EXPECT_TRUE(result->get(0).is_null());
+        EXPECT_EQ("[1,2,1,4]", result->debug_item(1));
+        EXPECT_EQ("[1,2,3]", result->debug_item(2));
     }
 }
 } // namespace starrocks

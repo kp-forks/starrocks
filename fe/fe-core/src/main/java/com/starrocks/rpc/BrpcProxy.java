@@ -15,13 +15,10 @@
 
 package com.starrocks.rpc;
 
-import com.baidu.bjf.remoting.protobuf.utils.JDKCompilerHelper;
-import com.baidu.bjf.remoting.protobuf.utils.compiler.JdkCompiler;
 import com.baidu.jprotobuf.pbrpc.client.ProtobufRpcProxy;
 import com.baidu.jprotobuf.pbrpc.transport.RpcClient;
 import com.baidu.jprotobuf.pbrpc.transport.RpcClientOptions;
 import com.starrocks.common.Config;
-import com.starrocks.common.util.JdkUtils;
 import com.starrocks.thrift.TNetworkAddress;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,12 +28,6 @@ public class BrpcProxy {
     // TODO: Eviction
     private final ConcurrentHashMap<TNetworkAddress, PBackendService> backendServiceMap;
     private final ConcurrentHashMap<TNetworkAddress, LakeService> lakeServiceMap;
-
-    static {
-        int javaRuntimeVersion = JdkUtils.getJavaVersionAsInteger(System.getProperty("java.version"));
-        JDKCompilerHelper
-                .setCompiler(new JdkCompiler(JdkCompiler.class.getClassLoader(), String.valueOf(javaRuntimeVersion)));
-    }
 
     public BrpcProxy() {
         final RpcClientOptions rpcOptions = new RpcClientOptions();

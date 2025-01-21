@@ -35,6 +35,7 @@ package com.starrocks.mysql.nio;
 
 import com.starrocks.common.Config;
 import com.starrocks.common.ThreadPoolManager;
+import com.starrocks.common.util.NetUtils;
 import com.starrocks.mysql.MysqlServer;
 import com.starrocks.qe.ConnectScheduler;
 import org.apache.logging.log4j.LogManager;
@@ -47,9 +48,7 @@ import org.xnio.XnioWorker;
 import org.xnio.channels.AcceptingChannel;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.util.concurrent.ExecutorService;
-import javax.net.ssl.SSLContext;
 
 /**
  * mysql protocol implementation based on nio.
@@ -67,14 +66,14 @@ public class NMysqlServer extends MysqlServer {
     private ExecutorService taskService = ThreadPoolManager
             .newDaemonCacheThreadPool(Config.max_mysql_service_task_threads_num, "starrocks-mysql-nio-pool", true);
 
-    public NMysqlServer(int port, ConnectScheduler connectScheduler, SSLContext sslContext) {
+    public NMysqlServer(int port, ConnectScheduler connectScheduler) {
         this.port = port;
         this.xnioWorker = Xnio.getInstance().createWorkerBuilder()
                 .setWorkerName("starrocks-mysql-nio")
                 .setWorkerIoThreads(Config.mysql_service_io_threads_num)
                 .setExternalExecutorService(taskService).build();
         // connectScheduler only used for idle check.
-        this.acceptListener = new AcceptListener(connectScheduler, sslContext);
+        this.acceptListener = new AcceptListener(connectScheduler);
     }
 
     // start MySQL protocol service
@@ -82,9 +81,15 @@ public class NMysqlServer extends MysqlServer {
     @Override
     public boolean start() {
         try {
-            server = xnioWorker.createStreamConnectionServer(new InetSocketAddress(port),
+            OptionMap optionMap = OptionMap.builder()
+                    .set(Options.TCP_NODELAY, true)
+                    .set(Options.BACKLOG, Config.mysql_nio_backlog_num)
+                    .set(Options.KEEP_ALIVE, Config.mysql_service_nio_enable_keep_alive)
+                    .getMap();
+
+            server = xnioWorker.createStreamConnectionServer(NetUtils.getSockAddrBasedOnCurrIpVersion(port),
                     acceptListener,
-                    OptionMap.create(Options.TCP_NODELAY, true, Options.BACKLOG, Config.mysql_nio_backlog_num));
+                    optionMap);
             server.resumeAccepts();
             running = true;
             LOG.info("Open mysql server success on {}", port);

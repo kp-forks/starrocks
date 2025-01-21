@@ -34,7 +34,7 @@ PARALLEL_TEST(BinaryColumnTest, test_create) {
 }
 
 // NOLINTNEXTLINE
-PARALLEL_TEST(BinaryColumnTest, test_binary_column_upgrade_if_overflow) {
+GROUP_SLOW_PARALLEL_TEST(BinaryColumnTest, test_binary_column_upgrade_if_overflow) {
     // small column
     auto column = BinaryColumn::create();
     for (size_t i = 0; i < 10; i++) {
@@ -44,7 +44,6 @@ PARALLEL_TEST(BinaryColumnTest, test_binary_column_upgrade_if_overflow) {
     ASSERT_TRUE(ret.ok());
     ASSERT_TRUE(ret.value() == nullptr);
 
-#ifdef NDEBUG
     // offset overflow
     column = BinaryColumn::create();
     size_t count = 1 << 30;
@@ -60,7 +59,6 @@ PARALLEL_TEST(BinaryColumnTest, test_binary_column_upgrade_if_overflow) {
         ASSERT_EQ(ret.value()->get(i).get_slice().to_string(), std::to_string(i));
     }
 
-    /*
     // row size overflow
     // the case will allocate a lot of memory, so temp remove it
     count = Column::MAX_CAPACITY_LIMIT + 5;
@@ -71,12 +69,10 @@ PARALLEL_TEST(BinaryColumnTest, test_binary_column_upgrade_if_overflow) {
     }
     ret = column->upgrade_if_overflow();
     ASSERT_TRUE(!ret.ok());
-    */
-#endif
 }
 
 // NOLINTNEXTLINE
-PARALLEL_TEST(BinaryColumnTest, test_binary_column_downgrade) {
+GROUP_SLOW_PARALLEL_TEST(BinaryColumnTest, test_binary_column_downgrade) {
     auto column = BinaryColumn::create();
     column->append_string("test");
     ASSERT_FALSE(column->has_large_column());
@@ -97,7 +93,6 @@ PARALLEL_TEST(BinaryColumnTest, test_binary_column_downgrade) {
         ASSERT_EQ(ret.value()->get(i).get_slice(), Slice(std::to_string(i)));
     }
 
-#ifdef NDEBUG
     large_column = LargeBinaryColumn::create();
     size_t count = 1 << 29;
     for (size_t i = 0; i < count; i++) {
@@ -105,7 +100,6 @@ PARALLEL_TEST(BinaryColumnTest, test_binary_column_downgrade) {
     }
     ret = large_column->downgrade();
     ASSERT_FALSE(ret.ok());
-#endif
 }
 
 // NOLINTNEXTLINE
@@ -148,7 +142,7 @@ PARALLEL_TEST(BinaryColumnTest, test_filter) {
     column->filter(filter);
     ASSERT_EQ(50, column->size());
 
-    std::vector<Slice>& slices = column->get_data();
+    const auto& slices = column->get_data();
 
     for (int i = 0; i < 50; ++i) {
         ASSERT_EQ(std::to_string(i * 2 + 1), slices[i].to_string());
@@ -159,7 +153,7 @@ PARALLEL_TEST(BinaryColumnTest, test_filter) {
 PARALLEL_TEST(BinaryColumnTest, test_append_strings) {
     std::vector<Slice> values{{"hello"}, {"starrocks"}};
     auto c1 = BinaryColumn::create();
-    ASSERT_TRUE(c1->append_strings(values));
+    ASSERT_TRUE(c1->append_strings(values.data(), values.size()));
     ASSERT_EQ(values.size(), c1->size());
     for (size_t i = 0; i < values.size(); i++) {
         ASSERT_EQ(values[i], c1->get_data()[i]);
@@ -167,7 +161,7 @@ PARALLEL_TEST(BinaryColumnTest, test_append_strings) {
 
     // Nullable BinaryColumn
     auto c2 = NullableColumn::create(BinaryColumn::create(), NullColumn::create());
-    ASSERT_TRUE(c2->append_strings(values));
+    ASSERT_TRUE(c2->append_strings(values.data(), values.size()));
     ASSERT_EQ(values.size(), c2->size());
     auto* c = reinterpret_cast<BinaryColumn*>(c2->mutable_data_column());
     for (size_t i = 0; i < values.size(); i++) {
@@ -225,8 +219,8 @@ PARALLEL_TEST(BinaryColumnTest, test_compare_at) {
     std::vector<Slice> strings{{"bbb"}, {"bbc"}, {"ccc"}};
     auto c1 = BinaryColumn::create();
     auto c2 = BinaryColumn::create();
-    c1->append_strings(strings);
-    c2->append_strings(strings);
+    c1->append_strings(strings.data(), strings.size());
+    c2->append_strings(strings.data(), strings.size());
     for (size_t i = 0; i < strings.size(); i++) {
         ASSERT_EQ(0, c1->compare_at(i, i, *c2, -1));
         ASSERT_EQ(0, c2->compare_at(i, i, *c1, -1));
@@ -323,8 +317,8 @@ PARALLEL_TEST(BinaryColumnTest, test_assign) {
     std::vector<Slice> strings{{"bbb"}, {"bbc"}, {"ccc"}};
     auto c1 = BinaryColumn::create();
     auto c2 = BinaryColumn::create();
-    c1->append_strings(strings);
-    c2->append_strings(strings);
+    c1->append_strings(strings.data(), strings.size());
+    c2->append_strings(strings.data(), strings.size());
 
     c1->assign(c1->size(), 0);
     for (size_t i = 0; i < strings.size(); i++) {
@@ -341,7 +335,7 @@ PARALLEL_TEST(BinaryColumnTest, test_assign) {
 PARALLEL_TEST(BinaryColumnTest, test_reset_column) {
     std::vector<Slice> strings{{"bbb"}, {"bbc"}, {"ccc"}};
     auto c1 = BinaryColumn::create();
-    c1->append_strings(strings);
+    c1->append_strings(strings.data(), strings.size());
     c1->set_delete_state(DEL_PARTIAL_SATISFIED);
 
     c1->reset_column();
@@ -354,7 +348,7 @@ PARALLEL_TEST(BinaryColumnTest, test_reset_column) {
 PARALLEL_TEST(BinaryColumnTest, test_swap_column) {
     std::vector<Slice> strings{{"bbb"}, {"bbc"}, {"ccc"}};
     auto c1 = BinaryColumn::create();
-    c1->append_strings(strings);
+    c1->append_strings(strings.data(), strings.size());
     c1->set_delete_state(DEL_PARTIAL_SATISFIED);
 
     auto c2 = BinaryColumn::create();

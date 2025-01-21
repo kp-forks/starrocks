@@ -14,10 +14,13 @@
 
 #pragma once
 
+#include "exec/pipeline/pipeline_fwd.h"
+#include "exec/pipeline/scan/balanced_chunk_buffer.h"
 #include "exec/pipeline/source_operator.h"
 #include "exec/query_cache/cache_operator.h"
 #include "exec/query_cache/lane_arbiter.h"
 #include "exec/workgroup/work_group_fwd.h"
+#include "util/race_detect.h"
 #include "util/spinlock.h"
 
 namespace starrocks {
@@ -38,7 +41,7 @@ public:
 
     static size_t max_buffer_capacity() { return kIOTaskBatchSize; }
 
-    [[nodiscard]] Status prepare(RuntimeState* state) override;
+    Status prepare(RuntimeState* state) override;
 
     // The running I/O task committed by ScanOperator holds the reference of query context,
     // so it can prevent the scan operator from deconstructored, but cannot prevent it from closed.
@@ -52,11 +55,13 @@ public:
 
     bool is_finished() const override;
 
-    [[nodiscard]] Status set_finishing(RuntimeState* state) override;
+    Status set_finishing(RuntimeState* state) override;
 
-    [[nodiscard]] StatusOr<ChunkPtr> pull_chunk(RuntimeState* state) override;
+    StatusOr<ChunkPtr> pull_chunk(RuntimeState* state) override;
 
     void update_metrics(RuntimeState* state) override { _merge_chunk_source_profiles(state); }
+
+    virtual workgroup::ScanSchedEntityType sched_entity_type() const { return workgroup::ScanSchedEntityType::OLAP; }
 
     void set_scan_executor(workgroup::ScanExecutor* scan_executor) { _scan_executor = scan_executor; }
 
@@ -65,7 +70,7 @@ public:
     int64_t global_rf_wait_timeout_ns() const override;
 
     /// interface for different scan node
-    [[nodiscard]] virtual Status do_prepare(RuntimeState* state) = 0;
+    virtual Status do_prepare(RuntimeState* state) = 0;
     virtual void do_close(RuntimeState* state) = 0;
     virtual ChunkSourcePtr create_chunk_source(MorselPtr morsel, int32_t chunk_source_index) = 0;
 
@@ -84,12 +89,29 @@ public:
         _op_pull_chunks += 1;
         _op_pull_rows += res->num_rows();
     }
+    bool is_asc() const { return _is_asc; }
     void end_pull_chunk(int64_t time) { _op_running_time_ns += time; }
     virtual void begin_driver_process() {}
     virtual void end_driver_process(PipelineDriver* driver) {}
     virtual bool is_running_all_io_tasks() const;
 
     virtual int64_t get_scan_table_id() const { return -1; }
+
+    void update_exec_stats(RuntimeState* state) override;
+
+    bool has_full_events() { return get_chunk_buffer().limiter()->has_full_events(); }
+    virtual bool need_notify_all() { return true; }
+
+    template <class NotifyAll>
+    auto defer_notify(NotifyAll notify_all) {
+        return DeferOp([this, notify_all]() {
+            if (notify_all()) {
+                _source_factory()->observes().notify_source_observers();
+            } else {
+                _observable.notify_source_observers();
+            }
+        });
+    }
 
 protected:
     static constexpr size_t kIOTaskBatchSize = 64;
@@ -99,21 +121,32 @@ protected:
     virtual void attach_chunk_source(int32_t source_index) = 0;
     virtual void detach_chunk_source(int32_t source_index) {}
     virtual bool has_shared_chunk_source() const = 0;
-    virtual ChunkPtr get_chunk_from_buffer() = 0;
-    virtual size_t num_buffered_chunks() const = 0;
-    virtual size_t buffer_size() const = 0;
-    virtual size_t buffer_capacity() const = 0;
-    virtual size_t buffer_memory_usage() const = 0;
-    virtual size_t default_buffer_capacity() const = 0;
-    virtual ChunkBufferTokenPtr pin_chunk(int num_chunks) = 0;
-    virtual bool is_buffer_full() const = 0;
-    virtual void set_buffer_finished() = 0;
+
+    virtual BalancedChunkBuffer& get_chunk_buffer() const = 0;
+
+    ChunkPtr get_chunk_from_buffer() {
+        auto& chunk_buffer = get_chunk_buffer();
+        ChunkPtr chunk = nullptr;
+        if (chunk_buffer.try_get(_driver_sequence, &chunk)) {
+            return chunk;
+        }
+        return nullptr;
+    }
+
+    size_t num_buffered_chunks() const { return get_chunk_buffer().size(_driver_sequence); }
+    size_t buffer_size() const { return get_chunk_buffer().size(_driver_sequence); }
+    size_t buffer_capacity() const { return get_chunk_buffer().limiter()->capacity(); }
+    size_t buffer_memory_usage() const { return get_chunk_buffer().memory_usage(); }
+    size_t default_buffer_capacity() const { return get_chunk_buffer().limiter()->default_capacity(); }
+    ChunkBufferTokenPtr pin_chunk(int num_chunks) { return get_chunk_buffer().limiter()->pin(num_chunks); }
+    bool is_buffer_full() const { return get_chunk_buffer().limiter()->is_full(); }
+    void set_buffer_finished() { get_chunk_buffer().set_finished(_driver_sequence); }
 
     // This method is only invoked when current morsel is reached eof
     // and all cached chunk of this morsel has benn read out
-    [[nodiscard]] virtual Status _pickup_morsel(RuntimeState* state, int chunk_source_index);
-    [[nodiscard]] Status _trigger_next_scan(RuntimeState* state, int chunk_source_index);
-    [[nodiscard]] Status _try_to_trigger_next_scan(RuntimeState* state);
+    virtual Status _pickup_morsel(RuntimeState* state, int chunk_source_index);
+    Status _trigger_next_scan(RuntimeState* state, int chunk_source_index);
+    Status _try_to_trigger_next_scan(RuntimeState* state);
     virtual void _close_chunk_source_unlocked(RuntimeState* state, int index);
     void _close_chunk_source(RuntimeState* state, int index);
     virtual void _finish_chunk_source_task(RuntimeState* state, int chunk_source_index, int64_t cpu_time_ns,
@@ -133,7 +166,7 @@ protected:
         }
     }
 
-    [[nodiscard]] inline Status _get_scan_status() const {
+    inline Status _get_scan_status() const {
         std::lock_guard<SpinLock> l(_scan_status_mutex);
         return _scan_status;
     }
@@ -143,6 +176,7 @@ protected:
     const int32_t _dop;
     const bool _output_chunk_by_bucket;
     const int _io_tasks_per_scan_operator;
+    const int _is_asc;
     // ScanOperator may do parallel scan, so each _chunk_sources[i] needs to hold
     // a profile indenpendently, to be more specificly, _chunk_sources[i] will go through
     // many ChunkSourcePtr in the entire life time, all these ChunkSources of _chunk_sources[i]
@@ -170,6 +204,9 @@ protected:
     int64_t _op_pull_rows = 0;
     int64_t _op_running_time_ns = 0;
 
+    // ticket_checker is used to count down the EOS generated by SplitMorsels from the identical original ScanMorsel.
+    query_cache::TicketCheckerPtr _ticket_checker = nullptr;
+
 private:
     int32_t _io_task_retry_cnt = 0;
     workgroup::ScanExecutor* _scan_executor = nullptr;
@@ -184,8 +221,6 @@ private:
 
     query_cache::LaneArbiterPtr _lane_arbiter = nullptr;
     query_cache::CacheOperatorPtr _cache_operator = nullptr;
-    // ticket_checker is used to count down the EOS generated by SplitMorsels from the identical original ScanMorsel.
-    query_cache::TicketCheckerPtr _ticket_checker = nullptr;
 
     RuntimeProfile::Counter* _default_buffer_capacity_counter = nullptr;
     RuntimeProfile::Counter* _buffer_capacity_counter = nullptr;
@@ -198,6 +233,8 @@ private:
 
     RuntimeProfile::Counter* _prepare_chunk_source_timer = nullptr;
     RuntimeProfile::Counter* _submit_io_task_timer = nullptr;
+
+    DECLARE_RACE_DETECTOR(race_pull_chunk)
 };
 
 class ScanOperatorFactory : public SourceOperatorFactory {
@@ -210,15 +247,15 @@ public:
 
     bool with_morsels() const override { return true; }
 
-    [[nodiscard]] Status prepare(RuntimeState* state) override;
+    Status prepare(RuntimeState* state) override;
     void close(RuntimeState* state) override;
 
     // interface for different scan node
-    [[nodiscard]] virtual Status do_prepare(RuntimeState* state) = 0;
+    virtual Status do_prepare(RuntimeState* state) = 0;
     virtual void do_close(RuntimeState* state) = 0;
     virtual OperatorPtr do_create(int32_t dop, int32_t driver_sequence) = 0;
 
-    SourceOperatorFactory::AdaptiveState adaptive_state() const override { return AdaptiveState::ACTIVE; }
+    SourceOperatorFactory::AdaptiveState adaptive_initial_state() const override { return AdaptiveState::ACTIVE; }
 
     std::shared_ptr<workgroup::ScanTaskGroup> scan_task_group() const { return _scan_task_group; }
 
@@ -227,6 +264,10 @@ protected:
 
     std::shared_ptr<workgroup::ScanTaskGroup> _scan_task_group;
 };
+
+inline auto scan_defer_notify(ScanOperator* scan_op) {
+    return scan_op->defer_notify([scan_op]() -> bool { return scan_op->need_notify_all(); });
+}
 
 pipeline::OpFactories decompose_scan_node_to_pipeline(std::shared_ptr<ScanOperatorFactory> factory, ScanNode* scan_node,
                                                       pipeline::PipelineBuilderContext* context);

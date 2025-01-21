@@ -37,7 +37,7 @@ public:
             return data;
         } else if constexpr (std::is_same_v<T, Slice>) {
             auto data = BinaryColumn::create();
-            data->append_strings(values);
+            data->append_strings(values.data(), values.size());
             return data;
         } else if constexpr (std::is_same_v<T, double>) {
             auto data = DoubleColumn ::create();
@@ -46,6 +46,13 @@ public:
         } else {
             throw std::runtime_error("Type is not supported in build_column:%s" + std::string(typeid(T).name()));
         }
+    }
+
+    template <class T>
+    static ColumnPtr build_nullable_column(const std::vector<T>& values) {
+        auto null_column = NullColumn::create(values.size(), 0);
+        auto data_column = build_column<T>(values);
+        return NullableColumn::create(std::move(data_column), std::move(null_column));
     }
 
     template <class T>

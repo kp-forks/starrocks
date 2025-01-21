@@ -39,6 +39,7 @@
 #include "http/action/checksum_action.h"
 #include "http/action/compact_rocksdb_meta_action.h"
 #include "http/action/compaction_action.h"
+#include "http/action/datacache_action.h"
 #include "http/action/greplog_action.h"
 #include "http/action/health_action.h"
 #include "http/action/lake/dump_tablet_metadata_action.h"
@@ -147,7 +148,7 @@ Status HttpServiceBE::start() {
 
     // register pprof actions
     if (!config::pprof_profile_dir.empty()) {
-        fs::create_directories(config::pprof_profile_dir);
+        RETURN_IF_ERROR(fs::create_directories(config::pprof_profile_dir));
     }
 
     auto* heap_action = new HeapAction();
@@ -179,6 +180,10 @@ Status HttpServiceBE::start() {
     _ev_http_server->register_handler(HttpMethod::HEAD, "/pprof/symbol", symbol_action);
     _ev_http_server->register_handler(HttpMethod::POST, "/pprof/symbol", symbol_action);
     _http_handlers.emplace_back(symbol_action);
+
+    auto* ioprofile_action = new IOProfileAction();
+    _ev_http_server->register_handler(HttpMethod::GET, "/ioprofile", ioprofile_action);
+    _http_handlers.emplace_back(ioprofile_action);
 
     // register metrics
     {
@@ -256,6 +261,10 @@ Status HttpServiceBE::start() {
     _ev_http_server->register_handler(HttpMethod::GET, "/api/query_cache/{action}", query_cache_action);
     _ev_http_server->register_handler(HttpMethod::PUT, "/api/query_cache/{action}", query_cache_action);
     _http_handlers.emplace_back(query_cache_action);
+
+    auto* datacache_action = new DataCacheAction(_env);
+    _ev_http_server->register_handler(HttpMethod::GET, "/api/datacache/{action}", datacache_action);
+    _http_handlers.emplace_back(datacache_action);
 
     auto* pipeline_driver_poller_action = new PipelineBlockingDriversAction(_env);
     _ev_http_server->register_handler(HttpMethod::GET, "/api/pipeline_blocking_drivers/{action}",

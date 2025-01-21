@@ -17,6 +17,7 @@
 #include <deque>
 #include <future>
 #include <sstream>
+#include <utility>
 
 // use string iequal
 #include <event2/buffer.h>
@@ -89,6 +90,9 @@ TransactionManagerAction::TransactionManagerAction(ExecEnv* exec_env) : _exec_en
 TransactionManagerAction::~TransactionManagerAction() = default;
 
 static void _send_reply(HttpRequest* req, const std::string& str) {
+    if (config::enable_stream_load_verbose_log) {
+        LOG(INFO) << "transaction streaming load response: " << str;
+    }
     HttpChannel::send_reply(req, str);
 }
 
@@ -141,27 +145,19 @@ void TransactionStreamLoadAction::_send_error_reply(HttpRequest* req, const Stat
 }
 
 void TransactionStreamLoadAction::handle(HttpRequest* req) {
-    StreamLoadContext* ctx = nullptr;
-    const auto& label = req->header(HTTP_LABEL_KEY);
-    if (!req->header(HTTP_CHANNEL_ID).empty()) {
-        int channel_id = std::stoi(req->header(HTTP_CHANNEL_ID));
-        ctx = _exec_env->stream_context_mgr()->get_channel_context(label, channel_id);
-    } else {
-        ctx = _exec_env->stream_context_mgr()->get(label);
+    if (config::enable_stream_load_verbose_log) {
+        LOG(INFO) << "transaction streaming load request, handle: " << req->debug_string();
     }
+
+    StreamLoadContext* ctx = static_cast<StreamLoadContext*>(req->handler_ctx());
     if (ctx == nullptr) {
         return;
     }
-    DeferOp defer([&] {
-        if (ctx->unref()) {
-            delete ctx;
-        }
-    });
     ctx->last_active_ts = MonotonicNanos();
 
     if (!ctx->status.ok()) {
         if (ctx->need_rollback) {
-            _exec_env->transaction_mgr()->_rollback_transaction(ctx);
+            (void)_exec_env->transaction_mgr()->_rollback_transaction(ctx);
         }
     }
 
@@ -170,16 +166,20 @@ void TransactionStreamLoadAction::handle(HttpRequest* req) {
     // For JSON, now the buffer contains a complete json.
     if (ctx->buffer != nullptr && ctx->buffer->pos > 0) {
         ctx->buffer->flip();
-        ctx->body_sink->append(std::move(ctx->buffer));
+        WARN_IF_ERROR(ctx->body_sink->append(std::move(ctx->buffer)),
+                      "append MessageBodySink failed when handle TransactionStreamLoad");
         ctx->buffer = nullptr;
     }
 
     auto resp = _exec_env->transaction_mgr()->_build_reply(TXN_LOAD, ctx);
-    ctx->lock.unlock();
     _send_reply(req, resp);
 }
 
 int TransactionStreamLoadAction::on_header(HttpRequest* req) {
+    if (config::enable_stream_load_verbose_log) {
+        LOG(INFO) << "transaction streaming load request, header: " << req->debug_string();
+    }
+
     const auto& label = req->header(HTTP_LABEL_KEY);
     if (label.empty()) {
         _send_error_reply(req, Status::InvalidArgument(fmt::format("Invalid label {}", req->header(HTTP_LABEL_KEY))));
@@ -221,6 +221,9 @@ int TransactionStreamLoadAction::on_header(HttpRequest* req) {
         _send_error_reply(req, Status::TransactionInProcessing("Transaction in processing, please retry later"));
         return -1;
     }
+    // referenced by the http request
+    ctx->ref();
+    req->set_handler_ctx(ctx);
     ctx->last_active_ts = MonotonicNanos();
     ctx->received_data_cost_nanos = 0;
     ctx->receive_bytes = 0;
@@ -231,10 +234,9 @@ int TransactionStreamLoadAction::on_header(HttpRequest* req) {
     if (!st.ok()) {
         ctx->status = st;
         if (ctx->need_rollback) {
-            _exec_env->transaction_mgr()->_rollback_transaction(ctx);
+            (void)_exec_env->transaction_mgr()->_rollback_transaction(ctx);
         }
         auto resp = _exec_env->transaction_mgr()->_build_reply(TXN_LOAD, ctx);
-        ctx->lock.unlock();
         _send_reply(req, resp);
         return -1;
     }
@@ -312,6 +314,10 @@ Status TransactionStreamLoadAction::_parse_request(HttpRequest* http_req, Stream
     request.formatType = ctx->format;
     request.__set_loadId(ctx->id.to_thrift());
     request.fileType = TFileType::FILE_STREAM;
+    auto backend_id = get_backend_id();
+    if (backend_id.has_value()) {
+        request.__set_backend_id(backend_id.value());
+    }
 
     if (!http_req->header(HTTP_COLUMNS).empty()) {
         request.__set_columns(http_req->header(HTTP_COLUMNS));
@@ -414,6 +420,16 @@ Status TransactionStreamLoadAction::_parse_request(HttpRequest* http_req, Stream
         request.__set_timeout(ctx->timeout_second);
     }
 
+    if (!http_req->header(HttpHeaders::CONTENT_ENCODING).empty() && !http_req->header(HTTP_COMPRESSION).empty()) {
+        return Status::InvalidArgument("Only one of http header content-encoding and compression can be set");
+    }
+
+    if (!http_req->header(HttpHeaders::CONTENT_ENCODING).empty()) {
+        request.__set_payload_compression_type(http_req->header(HttpHeaders::CONTENT_ENCODING));
+    } else if (!http_req->header(HTTP_COMPRESSION).empty()) {
+        request.__set_payload_compression_type(http_req->header(HTTP_COMPRESSION));
+    }
+
     return Status::OK();
 }
 
@@ -460,7 +476,7 @@ Status TransactionStreamLoadAction::_exec_plan_fragment(HttpRequest* http_req, S
 #endif
     Status plan_status(ctx->put_result.status);
     if (!plan_status.ok()) {
-        LOG(WARNING) << "plan streaming load failed. errmsg=" << plan_status.get_error_msg() << " " << ctx->brief();
+        LOG(WARNING) << "plan streaming load failed. errmsg=" << plan_status.message() << " " << ctx->brief();
         return plan_status;
     }
     VLOG(3) << "params is " << apache::thrift::ThriftDebugString(ctx->put_result.params);
@@ -478,22 +494,10 @@ Status TransactionStreamLoadAction::_exec_plan_fragment(HttpRequest* http_req, S
 }
 
 void TransactionStreamLoadAction::on_chunk_data(HttpRequest* req) {
-    StreamLoadContext* ctx = nullptr;
-    const string& label = req->header(HTTP_LABEL_KEY);
-    if (!req->header(HTTP_CHANNEL_ID).empty()) {
-        int channel_id = std::stoi(req->header(HTTP_CHANNEL_ID));
-        ctx = _exec_env->stream_context_mgr()->get_channel_context(label, channel_id);
-    } else {
-        ctx = _exec_env->stream_context_mgr()->get(label);
-    }
+    StreamLoadContext* ctx = static_cast<StreamLoadContext*>(req->handler_ctx());
     if (ctx == nullptr) {
         return;
     }
-    DeferOp defer([&] {
-        if (ctx->unref()) {
-            delete ctx;
-        }
-    });
 
     SCOPED_THREAD_LOCAL_MEM_TRACKER_SETTER(ctx->instance_mem_tracker.get());
 
@@ -506,8 +510,11 @@ void TransactionStreamLoadAction::on_chunk_data(HttpRequest* req) {
     while ((len = evbuffer_get_length(evbuf)) > 0) {
         if (ctx->buffer == nullptr) {
             // Initialize buffer.
-            ctx->buffer = ByteBuffer::allocate(
-                    ctx->format == TFileFormatType::FORMAT_JSON ? std::max(len, ctx->kDefaultBufferSize) : len);
+            ASSIGN_OR_SET_STATUS_AND_RETURN_IF_ERROR(
+                    ctx->status, ctx->buffer,
+                    ByteBuffer::allocate_with_tracker(ctx->format == TFileFormatType::FORMAT_JSON
+                                                              ? std::max(len, ctx->kDefaultBufferSize)
+                                                              : len));
 
         } else if (ctx->buffer->remaining() < len) {
             if (ctx->format == TFileFormatType::FORMAT_JSON) {
@@ -521,7 +528,9 @@ void TransactionStreamLoadAction::on_chunk_data(HttpRequest* req) {
                     ctx->status = Status::MemoryLimitExceeded(err_msg);
                     return;
                 }
-                ByteBufferPtr buf = ByteBuffer::allocate(BitUtil::RoundUpToPowerOfTwo(data_sz));
+                ASSIGN_OR_SET_STATUS_AND_RETURN_IF_ERROR(
+                        ctx->status, ByteBufferPtr buf,
+                        ByteBuffer::allocate_with_tracker(BitUtil::RoundUpToPowerOfTwo(data_sz)));
                 buf->put_bytes(ctx->buffer->ptr, ctx->buffer->pos);
                 std::swap(buf, ctx->buffer);
 
@@ -536,7 +545,9 @@ void TransactionStreamLoadAction::on_chunk_data(HttpRequest* req) {
                     return;
                 }
 
-                ctx->buffer = ByteBuffer::allocate(std::max(len, ctx->kDefaultBufferSize));
+                ASSIGN_OR_SET_STATUS_AND_RETURN_IF_ERROR(
+                        ctx->status, ctx->buffer,
+                        ByteBuffer::allocate_with_tracker(std::max(len, ctx->kDefaultBufferSize)));
             }
         }
 
@@ -554,6 +565,23 @@ void TransactionStreamLoadAction::on_chunk_data(HttpRequest* req) {
     ctx->last_active_ts = MonotonicNanos();
     ctx->received_data_cost_nanos += ctx->last_active_ts - start_read_data_time;
     ctx->total_received_data_cost_nanos += ctx->last_active_ts - start_read_data_time;
+    VLOG(1) << "Receive http chunk, " << ctx->brief() << ", total expected bytes: " << ctx->body_bytes
+            << ", total received bytes: " << ctx->total_receive_bytes;
+}
+
+void TransactionStreamLoadAction::free_handler_ctx(void* param) {
+    StreamLoadContext* ctx = static_cast<StreamLoadContext*>(param);
+    if (ctx == nullptr) {
+        return;
+    }
+    DCHECK(!ctx->lock.try_lock());
+    ctx->lock.unlock();
+    if (config::enable_stream_load_verbose_log) {
+        LOG(INFO) << "free handler context, " << ctx->brief();
+    }
+    if (ctx->unref()) {
+        delete ctx;
+    }
 }
 
 } // namespace starrocks

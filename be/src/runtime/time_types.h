@@ -117,7 +117,7 @@ public:
 
     inline static void to_date_with_cache(JulianDate julian, int* year, int* month, int* day);
 
-    static bool check(int year, int month, int day);
+    inline static bool check(int year, int month, int day);
 
     static JulianDate from_date(int year, int month, int day);
 
@@ -144,7 +144,7 @@ public:
 
     // Get date base on format "%Y-%m-%d", '-' means any char.
     // compare every char.
-    static bool from_string_to_date_internal(const char* ptr, int* year, int* month, int* day);
+    static bool from_string_to_date_internal(const char* ptr, int* pyear, int* pmonth, int* pday);
 
     // process string based on format like "%Y-%m-%d %H:%i:%s",
     // if successful return true;
@@ -157,8 +157,17 @@ public:
                             int* second, int* microsecond);
     static bool from_string_to_date(const char* date_str, size_t len, int* year, int* month, int* day);
     static bool is_standard_datetime_format(const char* ptr, int length, const char** ptr_time);
-    static bool from_string_to_datetime(const char* date_str, size_t len, int* year, int* month, int* day, int* hour,
-                                        int* minute, int* second, int* microsecond);
+    struct ToDatetimeResult {
+        int year;
+        int month;
+        int day;
+        int hour;
+        int minute;
+        int second;
+        int microsecond;
+    };
+
+    static std::pair<bool, bool> from_string_to_datetime(const char* date_str, size_t len, ToDatetimeResult* res);
 
 public:
     // from_date(1970, 1, 1)
@@ -201,19 +210,22 @@ public:
 
     inline static Timestamp from_julian_and_time(JulianDate julian, Timestamp microsecond);
 
-    static bool check_time(int hour, int minute, int second, int microsecond);
+    inline static bool check_time(int hour, int minute, int second, int microsecond);
 
     inline static bool check(int year, int month, int day, int hour, int minute, int second, int microsecond);
 
     template <TimeUnit UNIT>
     static Timestamp add(Timestamp timestamp, int count);
 
-    template <bool use_iso8601_format = false>
+    template <TimeUnit UNIT>
+    static Timestamp sub(Timestamp timestamp, int count);
+
+    template <bool use_iso8601_format = false, bool igonre_microsecond = false>
     static std::string to_string(Timestamp timestamp);
 
     // Returns the length of formatted string or -1 if the size of buffer too
     // small to fill the formatted string.
-    template <bool use_iso8601_format = false>
+    template <bool use_iso8601_format = false, bool igonre_microsecond = false>
     static int to_string(Timestamp timestamp, char* s, size_t n);
 
     inline static double time_to_literal(double time);
@@ -227,7 +239,7 @@ public:
     // MIN_DATE | 0
     static const Timestamp MIN_TIMESTAMP = (1892325482100162560LL);
 
-    // seconds from 1970.01.01
+    // seconds since julian date epoch to 1970.01.01
     static const Timestamp UNIX_EPOCH_SECONDS = (210866803200LL);
 };
 
@@ -307,6 +319,14 @@ bool date::char_to_digit(const char* value, int i, uint8_t* v) {
     }
 }
 
+bool date::check(int year, int month, int day) {
+    if (year > 9999 || month > 12 || month < 1 || day > 31 || day < 1) {
+        return false;
+    }
+
+    return day <= DAYS_IN_MONTH[is_leap(year)][month];
+}
+
 // ============================== Timestamp inline function ==================================
 
 Timestamp timestamp::to_time(Timestamp timestamp) {
@@ -381,6 +401,11 @@ Timestamp timestamp::add(Timestamp timestamp, int count) {
     }
 }
 
+template <TimeUnit UNIT>
+Timestamp timestamp::sub(Timestamp timestamp, int count) {
+    return timestamp::add<UNIT>(timestamp, -count);
+}
+
 double timestamp::time_to_literal(double time) {
     uint64_t t = time;
     uint64_t hour = t / 3600;
@@ -393,6 +418,10 @@ Timestamp timestamp::of_epoch_second(int64_t seconds, int64_t nanoseconds) {
     int64_t second = seconds + timestamp::UNIX_EPOCH_SECONDS;
     JulianDate day = second / SECS_PER_DAY;
     return timestamp::from_julian_and_time(day, second * USECS_PER_SEC + nanoseconds / NANOSECS_PER_USEC);
+}
+
+bool timestamp::check_time(int hour, int minute, int second, int microsecond) {
+    return hour < HOURS_PER_DAY && minute < MINS_PER_HOUR && second < SECS_PER_MINUTE && microsecond < USECS_PER_SEC;
 }
 
 struct JulianToDateEntry {
@@ -453,16 +482,16 @@ inline void date::to_date_with_cache(JulianDate julian, int* year, int* month, i
     return to_date(julian, year, month, day);
 }
 
-template <bool use_iso8601_format>
+template <bool use_iso8601_format, bool igonre_microsecond>
 std::string timestamp::to_string(Timestamp timestamp) {
     std::string s;
     raw::make_room(&s, 26);
-    int len = to_string<use_iso8601_format>(timestamp, s.data(), s.size());
+    int len = to_string<use_iso8601_format, igonre_microsecond>(timestamp, s.data(), s.size());
     s.resize(len);
     return s;
 }
 
-template <bool use_iso8601_format>
+template <bool use_iso8601_format, bool igonre_microsecond>
 int timestamp::to_string(Timestamp timestamp, char* to, size_t n) {
     int year, month, day;
     int hour, minute, second, microsecond;
@@ -490,6 +519,9 @@ int timestamp::to_string(Timestamp timestamp, char* to, size_t n) {
     /* Second */
     to[17] = (char)('0' + (second / 10));
     to[18] = (char)('0' + (second % 10));
+    if constexpr (igonre_microsecond) {
+        return 19;
+    }
     if (use_iso8601_format || microsecond > 0) {
         if (n < 26) {
             return -1;

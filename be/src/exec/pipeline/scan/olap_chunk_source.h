@@ -26,8 +26,10 @@
 #include "gen_cpp/InternalService_types.h"
 #include "runtime/runtime_state.h"
 #include "storage/conjunctive_predicates.h"
+#include "storage/predicate_tree/predicate_tree.hpp"
 #include "storage/tablet.h"
 #include "storage/tablet_reader.h"
+#include "util/runtime_profile.h"
 
 namespace starrocks {
 
@@ -47,11 +49,10 @@ public:
 
     Status prepare(RuntimeState* state) override;
     void close(RuntimeState* state) override;
+    void update_chunk_exec_stats(RuntimeState* state) override;
 
 private:
     Status _read_chunk(RuntimeState* state, ChunkPtr* chunk) override;
-
-    const workgroup::WorkGroupScanSchedEntity* _scan_sched_entity(const workgroup::WorkGroup* wg) const override;
 
     Status _get_tablet(const TInternalScanRange* scan_range);
     Status _init_reader_params(const std::vector<std::unique_ptr<OlapScanRange>>& key_ranges,
@@ -59,6 +60,7 @@ private:
     Status _init_scanner_columns(std::vector<uint32_t>& scanner_columns);
     Status _init_unused_output_columns(const std::vector<std::string>& unused_output_columns);
     Status _init_olap_reader(RuntimeState* state);
+    TCounterMinMaxType::type _get_counter_min_max_type(const std::string& metric_name);
     void _init_counter(RuntimeState* state);
     Status _init_global_dicts(TabletReaderParams* params);
     Status _read_chunk_from_storage([[maybe_unused]] RuntimeState* state, Chunk* chunk);
@@ -66,21 +68,22 @@ private:
     void _update_realtime_counter(Chunk* chunk);
     void _decide_chunk_size(bool has_predicate);
     Status _init_column_access_paths(Schema* schema);
+    Status _prune_schema_by_access_paths(Schema* schema);
 
 private:
     TabletReaderParams _params{};
     OlapScanNode* _scan_node;
     OlapScanContext* _scan_ctx;
 
-    const int64_t _limit; // -1: no limit
+    int64_t _limit; // -1: no limit
     TInternalScanRange* _scan_range;
 
-    ConjunctivePredicates _not_push_down_predicates;
-    std::vector<uint8_t> _selection;
+    PredicateTree _non_pushdown_pred_tree;
+    Filter _selection;
 
     ObjectPool _obj_pool;
     TabletSharedPtr _tablet;
-    std::shared_ptr<TabletSchema> _tablet_schema;
+    TabletSchemaCSPtr _tablet_schema;
     int64_t _version = 0;
 
     RuntimeState* _runtime_state = nullptr;
@@ -101,6 +104,11 @@ private:
     std::vector<SlotDescriptor*> _query_slots;
 
     std::vector<ColumnAccessPathPtr> _column_access_paths;
+
+    bool _use_vector_index = false;
+    bool _use_ivfpq = false;
+    std::string _vector_distance_column_name;
+    SlotId _vector_slot_id;
 
     // The following are profile meatures
     int64_t _num_rows_read = 0;
@@ -130,10 +138,12 @@ private:
     RuntimeProfile::Counter* _rows_key_range_counter = nullptr;
     RuntimeProfile::Counter* _bf_filter_timer = nullptr;
     RuntimeProfile::Counter* _zm_filtered_counter = nullptr;
+    RuntimeProfile::Counter* _vector_index_filtered_counter = nullptr;
     RuntimeProfile::Counter* _bf_filtered_counter = nullptr;
     RuntimeProfile::Counter* _seg_zm_filtered_counter = nullptr;
     RuntimeProfile::Counter* _seg_rt_filtered_counter = nullptr;
     RuntimeProfile::Counter* _sk_filtered_counter = nullptr;
+    RuntimeProfile::Counter* _rows_after_sk_filtered_counter = nullptr;
     RuntimeProfile::Counter* _block_seek_timer = nullptr;
     RuntimeProfile::Counter* _block_seek_counter = nullptr;
     RuntimeProfile::Counter* _block_load_timer = nullptr;
@@ -143,11 +153,20 @@ private:
     RuntimeProfile::Counter* _cached_pages_num_counter = nullptr;
     RuntimeProfile::Counter* _bi_filtered_counter = nullptr;
     RuntimeProfile::Counter* _bi_filter_timer = nullptr;
+    RuntimeProfile::Counter* _gin_filtered_counter = nullptr;
+    RuntimeProfile::Counter* _gin_filtered_timer = nullptr;
+    RuntimeProfile::Counter* _get_row_ranges_by_vector_index_timer = nullptr;
+    RuntimeProfile::Counter* _vector_search_timer = nullptr;
+    RuntimeProfile::Counter* _process_vector_distance_and_id_timer = nullptr;
     RuntimeProfile::Counter* _pushdown_predicates_counter = nullptr;
+    RuntimeProfile::Counter* _non_pushdown_predicates_counter = nullptr;
     RuntimeProfile::Counter* _rowsets_read_count = nullptr;
     RuntimeProfile::Counter* _segments_read_count = nullptr;
     RuntimeProfile::Counter* _total_columns_data_page_count = nullptr;
     RuntimeProfile::Counter* _read_pk_index_timer = nullptr;
+    RuntimeProfile::Counter* _pushdown_access_paths_counter = nullptr;
+    RuntimeProfile::Counter* _access_path_hits_counter = nullptr;
+    RuntimeProfile::Counter* _access_path_unhits_counter = nullptr;
 };
 } // namespace pipeline
 } // namespace starrocks

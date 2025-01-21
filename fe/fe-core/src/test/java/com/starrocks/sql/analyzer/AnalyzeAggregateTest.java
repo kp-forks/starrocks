@@ -102,9 +102,9 @@ public class AnalyzeAggregateTest {
         analyzeFail("select grouping(v1) from t0 group by v1",
                 "cannot use GROUPING functions without [grouping sets|rollup|cube] clause");
 
-        //grouping functions only support column.
+        //The arguments of GROUPING must be expressions referenced by GROUP BY
         analyzeFail("select v1, grouping(v1+1) from t0 group by grouping sets((v1))",
-                "grouping functions only support column.");
+                "The arguments of GROUPING must be expressions referenced by GROUP BY.");
 
         //cannot contain grouping
         analyzeFail("select v1 from t0 inner join t1 on grouping(v1)= v4", "JOIN clause cannot contain grouping");
@@ -133,7 +133,15 @@ public class AnalyzeAggregateTest {
         analyzeFail("select distinct v1 from t0 order by v2",
                 "must be an aggregate expression or appear in GROUP BY clause");
         analyzeFail("select distinct v1 as v from t0 order by v2",
-                "must be an aggregate expression or appear in GROUP BY clause");
+                " must be an aggregate expression or appear in GROUP BY clause");
+        analyzeFail("select * from t0 order by max(v2)",
+                "column must appear in the GROUP BY clause or be used in an aggregate function.");
+        analyzeFail("select distinct max(v1) from t0",
+                "cannot combine SELECT DISTINCT with aggregate functions or GROUP BY");
+        analyzeFail("select distinct abs(v1) from t0 order by max(v1)",
+                "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
+        analyzeFail("select distinct abs(v1) from t0 order by max(v2)",
+                "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
 
         analyzeSuccess("select distinct v1 as v from t0 having v = 1");
         analyzeFail("select distinct v1 as v from t0 having v2 = 2",
@@ -258,8 +266,8 @@ public class AnalyzeAggregateTest {
         analyzeFail("select percentile_approx('c',0.5) from tall group by tb");
         analyzeFail("select percentile_approx(1,'c') from tall group by tb");
         analyzeFail("select percentile_approx(1,1,'c') from tall group by tb");
-        analyzeFail("select percentile_approx(1,1,tc) from tall group by tb");
         analyzeFail("select percentile_approx(1,1,0.5,tc) from tall group by tb");
+        analyzeSuccess("select percentile_approx(1,1,tc) from tall group by tb");
         analyzeSuccess("select percentile_approx(1,5) from tall group by tb");
         analyzeSuccess("select percentile_approx(1,0.5,1047) from tall group by tb");
         analyzeSuccess("select percentile_disc(tj,0.5) from tall group by tb");
@@ -299,5 +307,4 @@ public class AnalyzeAggregateTest {
         analyzeSuccess("SELECT window_funnel(1, ta, 0, [ta='a', ta='b']) FROM tall");
         analyzeSuccess("SELECT window_funnel(1, ta, 0, [true, true, false]) FROM tall");
     }
-
 }

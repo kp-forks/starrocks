@@ -26,6 +26,7 @@ import com.starrocks.analysis.FunctionName;
 import com.starrocks.analysis.IntLiteral;
 import com.starrocks.analysis.NullLiteral;
 import com.starrocks.analysis.OrderByElement;
+import com.starrocks.catalog.FunctionSet;
 import com.starrocks.catalog.Type;
 import com.starrocks.common.AnalysisException;
 import com.starrocks.qe.ConnectContext;
@@ -302,6 +303,7 @@ public class WindowTransformer {
                     .setAnalyticWindow(windowOperator.getWindow())
                     .setEnforceSortColumns(sortEnforceProperty.stream().distinct().collect(Collectors.toList()))
                     .setUseHashBasedPartition(windowOperator.useHashBasedPartition)
+                    .setIsSkewed(windowOperator.isSkewed)
                     .build());
         }
 
@@ -399,11 +401,18 @@ public class WindowTransformer {
 
         /*
          * Step 2.
-         * Put the nodes with more partition columns at the top of the query plan
+         * For Each Sort Group, Put the nodes with more partition columns at the top of the query plan
          * to ensure that the Enforce operation can meet the conditions, and only one ExchangeNode will be generated
+         * If two window ops in the same sort group and same partition size, put rank-related window operator upper
+         * which help PushDownLimitRankingWindowRule and PushDownPredicateRankingWindowRule rule to check plan's shape
          */
         sortedGroups.forEach(sortGroup -> sortGroup.getWindowOperators()
-                .sort(Comparator.comparingInt(w -> w.getPartitionExpressions().size())));
+                .sort(Comparator
+                        .<LogicalWindowOperator>comparingInt(w -> w.getPartitionExpressions().size())
+                        .thenComparing(w -> {
+                            String fnName = w.getWindowCall().values().iterator().next().getFnName();
+                            return FunctionSet.RANK_RALATED_FUNCTIONS.contains(fnName) ? 1 : 0;
+                        })));
 
         /*
          * Step 3.
@@ -525,6 +534,10 @@ public class WindowTransformer {
         private List<OrderByElement> orderByElements;
         private final AnalyticWindow window;
         private final boolean useHashBasedPartition;
+        // If there are multiply window functions sharing the same window clause but only one of which has skew hint,
+        // it will be also treated as the same window clause. So this field should not be involved in the equals and
+        // hashCode method.
+        private boolean isSkewed;
 
         public WindowOperator(AnalyticExpr analyticExpr, List<Expr> partitionExprs,
                               List<OrderByElement> orderByElements, AnalyticWindow window) {
@@ -547,6 +560,11 @@ public class WindowTransformer {
                 }
             } else {
                 this.useHashBasedPartition = false;
+            }
+            if (!partitionExprs.isEmpty()) {
+                this.isSkewed = analyticExpr.isSkewed();
+            } else {
+                this.isSkewed = false;
             }
         }
 
@@ -574,6 +592,14 @@ public class WindowTransformer {
 
         public AnalyticWindow getWindow() {
             return window;
+        }
+
+        public boolean isSkewed() {
+            return isSkewed;
+        }
+
+        public void setSkewed() {
+            isSkewed = true;
         }
 
         @Override

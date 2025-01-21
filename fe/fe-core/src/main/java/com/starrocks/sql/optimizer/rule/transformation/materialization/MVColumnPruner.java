@@ -17,6 +17,7 @@ package com.starrocks.sql.optimizer.rule.transformation.materialization;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.starrocks.catalog.Column;
 import com.starrocks.sql.common.UnsupportedException;
 import com.starrocks.sql.optimizer.OptExpression;
@@ -29,11 +30,13 @@ import com.starrocks.sql.optimizer.operator.Projection;
 import com.starrocks.sql.optimizer.operator.logical.LogicalAggregationOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalFilterOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalJoinOperator;
+import com.starrocks.sql.optimizer.operator.logical.LogicalOlapScanOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalScanOperator;
+import com.starrocks.sql.optimizer.operator.logical.LogicalUnionOperator;
 import com.starrocks.sql.optimizer.operator.scalar.CallOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
+import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,11 +46,26 @@ public class MVColumnPruner {
     private ColumnRefSet requiredOutputColumns;
 
     public OptExpression pruneColumns(OptExpression queryExpression) {
-        Projection projection = queryExpression.getOp().getProjection();
+        if (queryExpression.getOp() instanceof LogicalFilterOperator) {
+            OptExpression newQueryOptExpression = doPruneColumns(queryExpression.inputAt(0));
+            Operator filterOp = queryExpression.getOp();
+            Operator.Builder opBuilder = OperatorBuilderFactory.build(filterOp);
+            opBuilder.withOperator(filterOp);
+            return OptExpression.create(opBuilder.build(), newQueryOptExpression);
+        } else {
+            return doPruneColumns(queryExpression);
+        }
+    }
+
+    public OptExpression doPruneColumns(OptExpression optExpression) {
+        Projection projection = optExpression.getOp().getProjection();
         // OptExpression after mv rewrite must have projection.
+        if (projection == null) {
+            return optExpression;
+        }
         Preconditions.checkState(projection != null);
         requiredOutputColumns = new ColumnRefSet(projection.getOutputColumns());
-        return queryExpression.getOp().accept(new ColumnPruneVisitor(), queryExpression, null);
+        return optExpression.getOp().accept(new ColumnPruneVisitor(), optExpression, null);
     }
 
     // Prune columns by top-down, only support SPJG/union operators.
@@ -64,9 +82,13 @@ public class MVColumnPruner {
                     scanOperator.getColRefToColumnMetaMap().keySet().stream().filter(requiredOutputColumns::contains)
                             .collect(Collectors.toSet());
             outputColumns.addAll(Utils.extractColumnRef(scanOperator.getPredicate()));
-            if (outputColumns.size() == 0) {
-                outputColumns.add(Utils.findSmallestColumnRef(
-                        new ArrayList<>(scanOperator.getColRefToColumnMetaMap().keySet())));
+            if (scanOperator instanceof LogicalOlapScanOperator) {
+                ((LogicalOlapScanOperator) scanOperator).getPrunedPartitionPredicates()
+                        .forEach(o -> outputColumns.addAll(Utils.extractColumnRef(o)));
+            }
+            if (outputColumns.isEmpty()) {
+                outputColumns.add(
+                        Utils.findSmallestColumnRefFromTable(scanOperator.getColRefToColumnMetaMap(), scanOperator.getTable()));
             }
 
             ImmutableMap.Builder<ColumnRefOperator, Column> columnRefColumnMapBuilder = new ImmutableMap.Builder<>();
@@ -79,6 +101,20 @@ public class MVColumnPruner {
                 builder.withOperator(scanOperator);
                 LogicalScanOperator.Builder scanBuilder = (LogicalScanOperator.Builder) builder;
                 scanBuilder.setColRefToColumnMetaMap(newColumnRefMap);
+                ColumnRefSet outputRefSet = new ColumnRefSet(outputColumns);
+                outputRefSet.except(requiredOutputColumns);
+                if (!outputRefSet.isEmpty() && projection == null) {
+                    // should add a projection
+                    Map<ColumnRefOperator, ScalarOperator> projectionMap = Maps.newHashMap();
+                    for (ColumnRefOperator columnRefOperator : outputColumns) {
+                        if (outputRefSet.contains(columnRefOperator)) {
+                            continue;
+                        }
+                        projectionMap.put(columnRefOperator, columnRefOperator);
+                    }
+                    Projection newProjection = new Projection(projectionMap);
+                    builder.setProjection(newProjection);
+                }
                 Operator newQueryOp = builder.build();
                 return OptExpression.create(newQueryOp);
             } else {
@@ -105,11 +141,54 @@ public class MVColumnPruner {
         }
 
         public OptExpression visitLogicalUnion(OptExpression optExpression, Void context) {
-            for (int childIdx = 0; childIdx < optExpression.arity(); ++childIdx) {
-                requiredOutputColumns.union(optExpression.getChildOutputColumns(childIdx));
+            LogicalUnionOperator unionOperator = optExpression.getOp().cast();
+            if (unionOperator.getProjection() != null) {
+                Projection projection = optExpression.getOp().getProjection();
+                projection.getColumnRefMap().values().forEach(s -> requiredOutputColumns.union(s.getUsedColumns()));
             }
+            List<ColumnRefOperator> unionOutputColRefs = unionOperator.getOutputColumnRefOp();
+            List<Integer> newUnionOutputIdxes = Lists.newArrayList();
+            List<ColumnRefOperator> newUnionOutputColRefs = Lists.newArrayList();
+            for (int i = 0; i < unionOutputColRefs.size(); i++) {
+                ColumnRefOperator columnRefOperator = unionOutputColRefs.get(i);
+                if (requiredOutputColumns.contains(columnRefOperator.getId())) {
+                    newUnionOutputIdxes.add(i);
+                    newUnionOutputColRefs.add(columnRefOperator);
+                }
+            }
+
+            // if all output columns are selected, no need to prune
+            if (newUnionOutputIdxes.size() == unionOutputColRefs.size()) {
+                for (int childIdx = 0; childIdx < optExpression.arity(); ++childIdx) {
+                    requiredOutputColumns.union(optExpression.getChildOutputColumns(childIdx));
+                }
+                List<OptExpression> children = visitChildren(optExpression);
+                return OptExpression.create(optExpression.getOp(), children);
+            }
+            // choose the smallest column ref if no column ref is selected to avoid empty output
+            if (newUnionOutputIdxes.isEmpty()) {
+                ColumnRefOperator smallestColumn = Utils.findSmallestColumnRef(unionOutputColRefs);
+                newUnionOutputColRefs.add(smallestColumn);
+                requiredOutputColumns.union(smallestColumn);
+                newUnionOutputIdxes.add(unionOutputColRefs.indexOf(smallestColumn));
+            }
+            List<List<ColumnRefOperator>> newChildOutputColumns = Lists.newArrayList();
+            for (int childIdx = 0; childIdx < optExpression.arity(); ++childIdx) {
+                List<ColumnRefOperator> childOutputCols = unionOperator.getChildOutputColumns().get(childIdx);
+                List<ColumnRefOperator> newChildOutputCols = Lists.newArrayList();
+                newUnionOutputIdxes.stream()
+                        .map(idx -> childOutputCols.get(idx))
+                        .forEach(x -> {
+                            requiredOutputColumns.union(x);
+                            newChildOutputCols.add(x);
+                        });
+                newChildOutputColumns.add(newChildOutputCols);
+            }
+            LogicalUnionOperator newUnionOperator = new LogicalUnionOperator(newUnionOutputColRefs, newChildOutputColumns,
+                    unionOperator.isUnionAll(), unionOperator.isFromIcebergEqualityDeleteRewrite());
+            newUnionOperator.setProjection(optExpression.getOp().getProjection());
             List<OptExpression> children = visitChildren(optExpression);
-            return OptExpression.create(optExpression.getOp(), children);
+            return OptExpression.create(newUnionOperator, children);
         }
 
         // NOTE: filter and join operator will not be kept in plan after mv rewrite,

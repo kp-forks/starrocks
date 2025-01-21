@@ -35,7 +35,6 @@
 #pragma once
 
 #include "common/status.h"
-#include "gen_cpp/doris_internal_service.pb.h"
 #include "gen_cpp/internal_service.pb.h"
 #include "service/internal_service.h"
 
@@ -66,6 +65,14 @@ public:
     void tablet_writer_add_chunks(google::protobuf::RpcController* controller,
                                   const PTabletWriterAddChunksRequest* request, PTabletWriterAddBatchResult* response,
                                   google::protobuf::Closure* done) override;
+
+    void tablet_writer_add_chunk_via_http(google::protobuf::RpcController* controller, const PHttpRequest* request,
+                                          PTabletWriterAddBatchResult* response,
+                                          google::protobuf::Closure* done) override;
+
+    void tablet_writer_add_chunks_via_http(google::protobuf::RpcController* controller, const PHttpRequest* request,
+                                           PTabletWriterAddBatchResult* response,
+                                           google::protobuf::Closure* done) override;
 
     void tablet_writer_add_segment(google::protobuf::RpcController* controller,
                                    const PTabletWriterAddSegmentRequest* request,

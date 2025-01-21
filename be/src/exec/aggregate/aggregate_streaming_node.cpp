@@ -213,8 +213,9 @@ pipeline::OpFactories AggregateStreamingNode::decompose_to_pipeline(pipeline::Pi
     size_t degree_of_parallelism = context->source_operator(ops_with_sink)->degree_of_parallelism();
 
     auto should_cache = context->should_interpolate_cache_operator(id(), ops_with_sink[0]);
-    if (!should_cache && _tnode.agg_node.__isset.interpolate_passthrough && _tnode.agg_node.interpolate_passthrough &&
-        context->could_local_shuffle(ops_with_sink)) {
+    bool could_local_shuffle = !should_cache && !context->enable_group_execution();
+    if (could_local_shuffle && _tnode.agg_node.__isset.interpolate_passthrough &&
+        _tnode.agg_node.interpolate_passthrough && context->could_local_shuffle(ops_with_sink)) {
         ops_with_sink = context->maybe_interpolate_local_passthrough_exchange(runtime_state(), id(), ops_with_sink,
                                                                               degree_of_parallelism, true);
     }
@@ -255,6 +256,7 @@ pipeline::OpFactories AggregateStreamingNode::decompose_to_pipeline(pipeline::Pi
         ops_with_source.emplace_back(
                 std::make_shared<LimitOperatorFactory>(context->next_operator_id(), id(), limit()));
     }
+    ops_with_source = context->maybe_interpolate_debug_ops(runtime_state(), _id, ops_with_source);
     return ops_with_source;
 }
 

@@ -36,6 +36,8 @@ package com.starrocks.rpc;
 
 import com.google.common.base.Preconditions;
 import com.starrocks.common.Config;
+import com.starrocks.common.profile.Timer;
+import com.starrocks.common.profile.Tracers;
 import com.starrocks.proto.ExecuteCommandRequestPB;
 import com.starrocks.proto.ExecuteCommandResultPB;
 import com.starrocks.proto.PCancelPlanFragmentRequest;
@@ -47,6 +49,8 @@ import com.starrocks.proto.PGetFileSchemaResult;
 import com.starrocks.proto.PListFailPointResponse;
 import com.starrocks.proto.PMVMaintenanceTaskResult;
 import com.starrocks.proto.PPlanFragmentCancelReason;
+import com.starrocks.proto.PProcessDictionaryCacheRequest;
+import com.starrocks.proto.PProcessDictionaryCacheResult;
 import com.starrocks.proto.PProxyRequest;
 import com.starrocks.proto.PProxyResult;
 import com.starrocks.proto.PPulsarProxyRequest;
@@ -76,13 +80,10 @@ public class BackendServiceClient {
         return BackendServiceClient.SingletonHolder.INSTANCE;
     }
 
-    public Future<PExecPlanFragmentResult> execPlanFragmentAsync(
-            TNetworkAddress address, TExecPlanFragmentParams tRequest, String protocol)
-            throws TException, RpcException {
-        final PExecPlanFragmentRequest pRequest = new PExecPlanFragmentRequest();
-        pRequest.setAttachmentProtocol(protocol);
-        pRequest.setRequest(tRequest, protocol);
-        try {
+    private Future<PExecPlanFragmentResult> sendPlanFragmentAsync(TNetworkAddress address, PExecPlanFragmentRequest pRequest)
+            throws RpcException {
+        Tracers.count(Tracers.Module.SCHEDULER, "DeployDataSize", pRequest.serializedRequest.length);
+        try (Timer ignored = Tracers.watchScope(Tracers.Module.SCHEDULER, "DeployAsyncSendTime")) {
             final PBackendService service = BrpcProxy.getBackendService(address);
             return service.execPlanFragmentAsync(pRequest);
         } catch (NoSuchElementException e) {
@@ -105,6 +106,24 @@ public class BackendServiceClient {
                     address.getHostname(), address.getPort(), e);
             throw new RpcException(address.hostname, e.getMessage());
         }
+    }
+
+    public Future<PExecPlanFragmentResult> execPlanFragmentAsync(
+            TNetworkAddress address, byte[] request, String protocol)
+            throws TException, RpcException {
+        final PExecPlanFragmentRequest pRequest = new PExecPlanFragmentRequest();
+        pRequest.setAttachmentProtocol(protocol);
+        pRequest.setRequest(request);
+        return sendPlanFragmentAsync(address, pRequest);
+    }
+
+    public Future<PExecPlanFragmentResult> execPlanFragmentAsync(
+            TNetworkAddress address, TExecPlanFragmentParams tRequest, String protocol)
+            throws TException, RpcException {
+        final PExecPlanFragmentRequest pRequest = new PExecPlanFragmentRequest();
+        pRequest.setAttachmentProtocol(protocol);
+        pRequest.setRequest(tRequest, protocol);
+        return sendPlanFragmentAsync(address, pRequest);
     }
 
     public Future<PCancelPlanFragmentResult> cancelPlanFragmentAsync(
@@ -278,6 +297,17 @@ public class BackendServiceClient {
             return service.listFailPointAsync(request);
         } catch (Throwable e) {
             LOG.warn("list failpoint exception, address={}:{}", address.getHostname(), address.getPort(), e);
+            throw new RpcException(address.hostname, e.getMessage());
+        }
+    }
+
+    public Future<PProcessDictionaryCacheResult> processDictionaryCache(
+            TNetworkAddress address, PProcessDictionaryCacheRequest request) throws RpcException {
+        try {
+            final PBackendService service = BrpcProxy.getBackendService(address);
+            return service.processDictionaryCache(request);
+        } catch (Throwable e) {
+            LOG.warn("failed to execute processDictionaryCache, address={}:{}", address.getHostname(), address.getPort(), e);
             throw new RpcException(address.hostname, e.getMessage());
         }
     }
