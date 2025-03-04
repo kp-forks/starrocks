@@ -108,11 +108,9 @@ public:
 
     void append_selective(const Column& src, const uint32_t* indexes, uint32_t from, uint32_t size) override;
 
-    void append_value_multiple_times(const Column& src, uint32_t index, uint32_t size, bool deep_copy) override;
+    void append_value_multiple_times(const Column& src, uint32_t index, uint32_t size) override;
 
     [[nodiscard]] bool append_nulls(size_t count) override;
-
-    [[nodiscard]] bool append_strings(const Buffer<Slice>& strs) override;
 
     [[nodiscard]] size_t append_numbers(const void* buff, size_t length) override;
 
@@ -151,7 +149,7 @@ public:
 
     int64_t xor_checksum(uint32_t from, uint32_t to) const override;
 
-    void put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx) const override;
+    void put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx, bool is) const override;
 
     std::string debug_item(size_t idx) const override;
 
@@ -171,7 +169,7 @@ public:
 
     void reset_column() override;
 
-    bool capacity_limit_reached(std::string* msg = nullptr) const override;
+    Status capacity_limit_reached() const override;
 
     void check_or_die() const override;
 

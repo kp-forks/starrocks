@@ -90,15 +90,15 @@ public class Subquery extends Expr {
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (!super.equals(o)) {
+    public boolean equalsWithoutChild(Object o) {
+        if (!super.equalsWithoutChild(o)) {
             return false;
         }
 
         if (((Subquery) o).getQueryStatement() == null) {
             return false;
         } else {
-            return o.equals(queryStatement);
+            return ((Subquery) o).getQueryStatement().equals(queryStatement);
         }
     }
 

@@ -15,10 +15,12 @@
 package com.starrocks.sql.optimizer;
 
 import com.google.common.collect.Lists;
+import com.starrocks.common.FeConstants;
 import com.starrocks.utframe.StarRocksAssert;
 import com.starrocks.utframe.UtFrameUtils;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -53,7 +55,7 @@ class SelectStmtWithCaseWhenTest {
                 "PROPERTIES (\n" +
                 "\"replication_num\" = \"1\",\n" +
                 "\"in_memory\" = \"false\",\n" +
-                "\"enable_persistent_index\" = \"false\",\n" +
+                "\"enable_persistent_index\" = \"true\",\n" +
                 "\"replicated_storage\" = \"false\",\n" +
                 "\"compression\" = \"LZ4\"\n" +
                 ");";
@@ -61,6 +63,7 @@ class SelectStmtWithCaseWhenTest {
         starRocksAssert = new StarRocksAssert();
         starRocksAssert.withDatabase("test").useDatabase("test");
         starRocksAssert.withTable(createTblStmtStr);
+        FeConstants.enablePruneEmptyOutputScan = false;
     }
 
     @ParameterizedTest(name = "sql_{index}: {0}.")
@@ -97,6 +100,28 @@ class SelectStmtWithCaseWhenTest {
     @MethodSource("caseInvolvingNull")
     void testCaseInvolvingNull(String sql, List<String> patterns) throws Exception {
         test(sql, patterns);
+    }
+
+    @Test
+    void testConstantWhen() throws Exception {
+        /// WHEN TRUE
+        starRocksAssert.query("select case when random() > 10.0 then 1 when true then 2 else 10 end")
+                .explainContains("if(random() > 10.0, 1, 2)");
+        starRocksAssert.query("select case when random() > 10.0 then 1 " +
+                        "   when true then 2 " +
+                        "   when true then 3 " +
+                        "   when random() <5 then 4 " +
+                        "else 10 end")
+                .explainContains("if(random() > 10.0, 1, 2)");
+
+        // WHEN FALSE
+        starRocksAssert.query("select case when random() > 10 then 1 when false then 2 else 10 end")
+                .explainContains(" if(random() > 10.0, 1, 10)");
+        starRocksAssert.query("select case when random() > 10 then 1 " +
+                        "when false then 2 " +
+                        "when false then 3 " +
+                        "else 10 end")
+                .explainContains(" if(random() > 10.0, 1, 10)");
     }
 
     private static Stream<Arguments> caseWhenWithCaseClauses() {
@@ -281,7 +306,14 @@ class SelectStmtWithCaseWhenTest {
 
                 {"select * from test.t0 where case ship_code when ship_mode + 1 then 'a' when ship_mode + 2 then 'b' " +
                         "else 'e' end in ('a', 'b', 'c', 'd')",
-                        "(CAST(5: ship_code AS BIGINT) = CAST(4: ship_mode AS BIGINT) + 1)"
+                        "  1:SELECT\n" +
+                                "  |  predicates: (6: cast = 8: add) OR ((6: cast = 7: cast + 2) AND" +
+                                " ((6: cast != 8: add) OR (6: cast IS NULL)))\n" +
+                                "  |    common sub expr:\n" +
+                                "  |    <slot 6> : CAST(5: ship_code AS BIGINT)\n" +
+                                "  |    <slot 7> : CAST(4: ship_mode AS BIGINT)\n" +
+                                "  |    <slot 8> : 7: cast + 1\n" +
+                                "  |  cardinality: 1\n"
                 },
                 {"select * from test.t0 where (case ship_code when ship_mode + 1 then 'a' when ship_mode + 2 then 'b' " +
                         "else 'e' end in ('a', 'b', 'c', 'd')) is null",
@@ -682,8 +714,8 @@ class SelectStmtWithCaseWhenTest {
                         "if (ship_code >= 1 and ship_code <= 4, 1, 0) as layer1," +
                         "if(ship_code is null or ship_code < 1, 1, 0) as layer2 from t0) " +
                         "select * from tmp where layer2 = 1 and layer0 != 1 and layer1 !=1",
-                        "(13: ship_code IS NULL) OR (13: ship_code < 1), if[([13: ship_code, INT, true] > 4, 1, 0)",
-                        "if[((13: ship_code >= 1) AND (13: ship_code <= 4), 1, 0)"
+                        "(5: ship_code IS NULL) OR (5: ship_code < 1), if[([5: ship_code, INT, true] > 4, 1, 0)",
+                        "if[((5: ship_code >= 1) AND (5: ship_code <= 4), 1, 0)"
                 },
 
                 {"select * from test.t0 where nullif('China', region) = 'China'", "[1: region, VARCHAR, false] != 'China'"},

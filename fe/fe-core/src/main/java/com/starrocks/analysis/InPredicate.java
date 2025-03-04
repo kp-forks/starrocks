@@ -66,11 +66,13 @@ public class InPredicate extends Predicate {
         children.add(compareExpr);
         children.addAll(inList);
         this.isNotIn = isNotIn;
+        this.opcode = isNotIn ? TExprOpcode.FILTER_NOT_IN : TExprOpcode.FILTER_IN;
     }
 
     protected InPredicate(InPredicate other) {
         super(other);
         isNotIn = other.isNotIn();
+        this.opcode = isNotIn ? TExprOpcode.FILTER_NOT_IN : TExprOpcode.FILTER_IN;
     }
 
     public int getInElementNum() {
@@ -95,6 +97,7 @@ public class InPredicate extends Predicate {
         children.add(compareExpr);
         children.add(subquery);
         this.isNotIn = isNotIn;
+        this.opcode = isNotIn ? TExprOpcode.FILTER_NOT_IN : TExprOpcode.FILTER_IN;
     }
 
     /**
@@ -162,8 +165,8 @@ public class InPredicate extends Predicate {
     }
 
     @Override
-    public boolean equals(Object obj) {
-        if (super.equals(obj)) {
+    public boolean equalsWithoutChild(Object obj) {
+        if (super.equalsWithoutChild(obj)) {
             InPredicate expr = (InPredicate) obj;
             return isNotIn == expr.isNotIn;
         }
