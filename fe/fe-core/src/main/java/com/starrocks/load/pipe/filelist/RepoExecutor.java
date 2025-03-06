@@ -15,12 +15,15 @@
 package com.starrocks.load.pipe.filelist;
 
 import com.google.common.base.Preconditions;
+import com.starrocks.common.AuditLog;
 import com.starrocks.common.Pair;
 import com.starrocks.common.Status;
+import com.starrocks.common.util.DebugUtil;
 import com.starrocks.common.util.UUIDUtil;
+import com.starrocks.http.HttpConnectContext;
 import com.starrocks.qe.ConnectContext;
-import com.starrocks.qe.DDLStmtExecutor;
 import com.starrocks.qe.StmtExecutor;
+import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.sql.StatementPlanner;
 import com.starrocks.sql.analyzer.Analyzer;
 import com.starrocks.sql.analyzer.SemanticException;
@@ -31,6 +34,7 @@ import com.starrocks.sql.plan.ExecPlan;
 import com.starrocks.statistic.StatisticUtils;
 import com.starrocks.thrift.TResultBatch;
 import com.starrocks.thrift.TResultSinkType;
+import org.apache.commons.collections4.ListUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -55,35 +59,40 @@ public class RepoExecutor {
     }
 
     public void executeDML(String sql) {
+        ConnectContext prev = ConnectContext.get();
         try {
-            ConnectContext context = createConnectContext();
-
+            ConnectContext context = createHttpConnectContext();
             StatementBase parsedStmt = SqlParser.parseOneWithStarRocksDialect(sql, context.getSessionVariable());
             Preconditions.checkState(parsedStmt instanceof DmlStmt, "the statement should be dml");
-            DmlStmt dmlStmt = (DmlStmt) parsedStmt;
-            ExecPlan execPlan = StatementPlanner.plan(parsedStmt, context, TResultSinkType.HTTP_PROTOCAL);
-            StmtExecutor executor = new StmtExecutor(context, parsedStmt);
+            StmtExecutor executor = StmtExecutor.newInternalExecutor(context, parsedStmt);
             context.setExecutor(executor);
             context.setQueryId(UUIDUtil.genUUID());
-            executor.handleDMLStmt(execPlan, dmlStmt);
+            AuditLog.getInternalAudit().info("RepoExecutor execute SQL | Query_id {} | SQL {}",
+                    DebugUtil.printId(context.getQueryId()), sql);
+            executor.execute();
         } catch (Exception e) {
             LOG.error("RepoExecutor execute SQL {} failed: {}", sql, e.getMessage(), e);
             throw new SemanticException(String.format("execute sql failed: %s", e.getMessage()), e);
         } finally {
             ConnectContext.remove();
+            if (prev != null) {
+                prev.setThreadLocalInfo();
+            }
         }
     }
 
     public List<TResultBatch> executeDQL(String sql) {
+        ConnectContext prev = ConnectContext.get();
         try {
             ConnectContext context = createConnectContext();
 
-            // TODO: use json sink protocol, instead of statistic protocol
             StatementBase parsedStmt = SqlParser.parseOneWithStarRocksDialect(sql, context.getSessionVariable());
             ExecPlan execPlan = StatementPlanner.plan(parsedStmt, context, TResultSinkType.HTTP_PROTOCAL);
-            StmtExecutor executor = new StmtExecutor(context, parsedStmt);
+            StmtExecutor executor = StmtExecutor.newInternalExecutor(context, parsedStmt);
             context.setExecutor(executor);
             context.setQueryId(UUIDUtil.genUUID());
+            AuditLog.getInternalAudit().info("RepoExecutor execute SQL | Query_id {} | SQL {}",
+                    DebugUtil.printId(context.getQueryId()), sql);
             Pair<List<TResultBatch>, Status> sqlResult = executor.executeStmtWithExecPlan(context, execPlan);
             if (!sqlResult.second.ok()) {
                 throw new SemanticException("execute sql failed with status: " + sqlResult.second.getErrorMsg());
@@ -94,6 +103,9 @@ public class RepoExecutor {
             throw new SemanticException("execute sql failed: " + sql, e);
         } finally {
             ConnectContext.remove();
+            if (prev != null) {
+                prev.setThreadLocalInfo();
+            }
         }
     }
 
@@ -101,9 +113,12 @@ public class RepoExecutor {
         try {
             ConnectContext context = createConnectContext();
 
-            StatementBase parsedStmt = SqlParser.parseOneWithStarRocksDialect(sql, context.getSessionVariable());
-            Analyzer.analyze(parsedStmt, context);
-            DDLStmtExecutor.execute(parsedStmt, context);
+            List<StatementBase> parsedStmts = SqlParser.parse(sql, context.getSessionVariable());
+            for (var parsedStmt : ListUtils.emptyIfNull(parsedStmts)) {
+                Analyzer.analyze(parsedStmt, context);
+                GlobalStateMgr.getCurrentState().getDdlStmtExecutor().execute(parsedStmt, context);
+            }
+            AuditLog.getInternalAudit().info("RepoExecutor execute DDL | SQL {}", sql);
         } catch (Exception e) {
             LOG.error("execute DDL error: {}", sql, e);
             throw new RuntimeException(e);
@@ -114,6 +129,14 @@ public class RepoExecutor {
 
     private static ConnectContext createConnectContext() {
         ConnectContext context = StatisticUtils.buildConnectContext();
+        context.setThreadLocalInfo();
+        context.setNeedQueued(false);
+        return context;
+    }
+
+    private static HttpConnectContext createHttpConnectContext() {
+        HttpConnectContext context =
+                (HttpConnectContext) StatisticUtils.buildConnectContext(TResultSinkType.HTTP_PROTOCAL);
         context.setThreadLocalInfo();
         context.setNeedQueued(false);
         return context;

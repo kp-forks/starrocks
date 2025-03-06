@@ -17,6 +17,8 @@
 #include <memory>
 #include <vector>
 
+#include "runtime/memory/column_allocator.h"
+
 namespace starrocks {
 
 class DecimalV2Value;
@@ -36,11 +38,15 @@ class Column;
 class Schema;
 struct ProtobufChunkMeta;
 
+template <typename T>
+class ColumnAllocator;
+
 // We may change the Buffer implementation in the future.
 template <typename T>
-using Buffer = std::vector<T>;
+using Buffer = std::vector<T, ColumnAllocator<T>>;
 
 class ArrayColumn;
+class ArrayViewColumn;
 class MapColumn;
 class StructColumn;
 class NullableColumn;
@@ -107,6 +113,13 @@ using ChunkPtr = std::shared_ptr<Chunk>;
 using ChunkUniquePtr = std::unique_ptr<Chunk>;
 using Chunks = std::vector<ChunkPtr>;
 
+class SegmentedColumn;
+class SegmentedChunk;
+using SegmentedColumnPtr = std::shared_ptr<SegmentedColumn>;
+using SegmentedColumns = std::vector<SegmentedColumnPtr>;
+using SegmentedChunkPtr = std::shared_ptr<SegmentedChunk>;
+using SegmentedChunkWeakPtr = std::weak_ptr<SegmentedChunk>;
+
 using SchemaPtr = std::shared_ptr<Schema>;
 
 using Fields = std::vector<std::shared_ptr<Field>>;
@@ -114,5 +127,6 @@ using FieldPtr = std::shared_ptr<Field>;
 
 using Filter = Buffer<uint8_t>;
 using FilterPtr = std::shared_ptr<Filter>;
+using FilterData = uint8_t;
 
 } // namespace starrocks

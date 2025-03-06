@@ -18,6 +18,7 @@
 #include "column/datum.h"
 #include "column/vectorized_fwd.h"
 #include "common/logging.h"
+#include "gutil/strings/substitute.h"
 
 namespace starrocks {
 
@@ -25,6 +26,8 @@ class ConstColumn final : public ColumnFactory<Column, ConstColumn> {
     friend class ColumnFactory<Column, ConstColumn>;
 
 public:
+    using ValueType = void;
+
     explicit ConstColumn(ColumnPtr data_column);
     ConstColumn(ColumnPtr data_column, size_t size);
 
@@ -47,6 +50,8 @@ public:
     ~ConstColumn() override = default;
 
     bool is_nullable() const override { return _data->is_nullable(); }
+    bool is_json() const override { return _data->is_json(); }
+    bool is_array() const override { return _data->is_array(); }
 
     bool is_null(size_t index) const override { return _data->is_null(0); }
 
@@ -106,24 +111,23 @@ public:
 
     void append_selective(const Column& src, const uint32_t* indexes, uint32_t from, uint32_t size) override;
 
-    void append_value_multiple_times(const Column& src, uint32_t index, uint32_t size, bool deep_copy) override;
+    void append_value_multiple_times(const Column& src, uint32_t index, uint32_t size) override;
 
-    ColumnPtr replicate(const std::vector<uint32_t>& offsets) override;
+    StatusOr<ColumnPtr> replicate(const Buffer<uint32_t>& offsets) override;
 
     bool append_nulls(size_t count) override {
+        DCHECK_GT(count, 0);
         if (_data->is_nullable()) {
             bool ok = true;
             if (_size == 0) {
                 ok = _data->append_nulls(1);
             }
-            _size += ok;
+            _size += count;
             return ok;
         } else {
             return false;
         }
     }
-
-    bool append_strings(const Buffer<Slice>& strs) override { return false; }
 
     size_t append_numbers(const void* buff, size_t length) override { return -1; }
 
@@ -157,8 +161,17 @@ public:
 
     void serialize_batch(uint8_t* dst, Buffer<uint32_t>& slice_sizes, size_t chunk_size,
                          uint32_t max_one_row_size) override {
-        for (size_t i = 0; i < chunk_size; ++i) {
-            slice_sizes[i] += _data->serialize(0, dst + i * max_one_row_size + slice_sizes[i]);
+        if (chunk_size <= 0) {
+            return;
+        }
+
+        auto* first_row_buf = dst + slice_sizes[0];
+        const size_t first_row_bytes = _data->serialize(0, first_row_buf);
+        slice_sizes[0] += first_row_bytes;
+
+        for (size_t i = 1; i < chunk_size; ++i) {
+            strings::memcpy_inlined(dst + i * max_one_row_size + slice_sizes[i], first_row_buf, first_row_bytes);
+            slice_sizes[i] += first_row_bytes;
         }
     }
 
@@ -201,7 +214,9 @@ public:
 
     int64_t xor_checksum(uint32_t from, uint32_t to) const override;
 
-    void put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx) const override { _data->put_mysql_row_buffer(buf, 0); }
+    void put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx, bool is_binary_protocol = false) const override {
+        _data->put_mysql_row_buffer(buf, 0, is_binary_protocol);
+    }
 
     std::string get_name() const override { return "const-" + _data->get_name(); }
 
@@ -247,15 +262,13 @@ public:
         return ss.str();
     }
 
-    bool capacity_limit_reached(std::string* msg = nullptr) const override {
-        RETURN_IF_UNLIKELY(_data->capacity_limit_reached(msg), true);
+    Status capacity_limit_reached() const override {
+        RETURN_IF_ERROR(_data->capacity_limit_reached());
         if (_size > Column::MAX_CAPACITY_LIMIT) {
-            if (msg != nullptr) {
-                msg->append("Row count of const column reach limit: " + std::to_string(Column::MAX_CAPACITY_LIMIT));
-            }
-            return true;
+            return Status::CapacityLimitExceed(strings::Substitute("Row count of const column reach limit: $0",
+                                                                   std::to_string(Column::MAX_CAPACITY_LIMIT)));
         }
-        return false;
+        return Status::OK();
     }
 
     void check_or_die() const override;

@@ -52,31 +52,32 @@ public class MysqlHandshakePacket extends MysqlPacket {
     private static final int SCRAMBLE_LENGTH = 20;
     // Version of handshake packet, since MySQL 3.21.0, Handshake of protocol 10 is used
     private static final int PROTOCOL_VERSION = 10;
-    // JDBC use this version to check which protocol the server support
-    private static final String SERVER_VERSION = Config.mysql_server_version;
+
     // 33 stands for UTF-8 character set
     private static final int CHARACTER_SET = 33;
     // use default capability for all
     private static final MysqlCapability CAPABILITY = MysqlCapability.DEFAULT_CAPABILITY;
     // status flags not supported in StarRocks
     private static final int STATUS_FLAGS = 0;
-    private static final String NATIVE_AUTH_PLUGIN_NAME = "mysql_native_password";
-    private static final String CLEAR_PASSWORD_PLUGIN_NAME = "mysql_clear_password";
+    public static final String NATIVE_AUTH_PLUGIN_NAME = "mysql_native_password";
+    public static final String CLEAR_PASSWORD_PLUGIN_NAME = "mysql_clear_password";
     public static final String AUTHENTICATION_KERBEROS_CLIENT = "authentication_kerberos_client";
+    public static final String AUTHENTICATION_OPENID_CONNECT_CLIENT = "authentication_openid_connect_client";
 
     private static final ImmutableMap<String, Boolean> SUPPORTED_PLUGINS = new ImmutableMap.Builder<String, Boolean>()
             .put(NATIVE_AUTH_PLUGIN_NAME, true)
             .put(CLEAR_PASSWORD_PLUGIN_NAME, true)
+            .put(AUTHENTICATION_OPENID_CONNECT_CLIENT, true)
             .build();
 
     // connection id used in KILL statement.
-    private int connectionId;
-    private byte[] authPluginData;
-    private boolean supportSSL;
+    private final int connectionId;
+    private final byte[] authPluginData;
+    private final boolean supportSSL;
 
     public MysqlHandshakePacket(int connectionId, boolean supportSSL) {
         this.connectionId = connectionId;
-        authPluginData = MysqlPassword.createRandomString(SCRAMBLE_LENGTH);
+        this.authPluginData = MysqlPassword.createRandomString(SCRAMBLE_LENGTH);
         this.supportSSL = supportSSL;
     }
 
@@ -93,7 +94,8 @@ public class MysqlHandshakePacket extends MysqlPacket {
         }
 
         serializer.writeInt1(PROTOCOL_VERSION);
-        serializer.writeNulTerminateString(SERVER_VERSION);
+        // JDBC use this version to check which protocol the server support
+        serializer.writeNulTerminateString(Config.mysql_server_version);
         serializer.writeInt4(connectionId);
         // first 8 bytes of auth plugin data
         serializer.writeBytes(authPluginData, 0, 8);
@@ -124,15 +126,15 @@ public class MysqlHandshakePacket extends MysqlPacket {
         }
     }
 
-    public boolean checkAuthPluginSameAsStarRocks(String pluginName) {
-        return SUPPORTED_PLUGINS.containsKey(pluginName) && SUPPORTED_PLUGINS.get(pluginName);
+    public static boolean checkAuthPluginSameAsStarRocks(String pluginName) {
+        return SUPPORTED_PLUGINS.containsKey(pluginName) && Boolean.TRUE.equals(SUPPORTED_PLUGINS.get(pluginName));
     }
 
     // If the auth default plugin in client is different from StarRocks
     // it will create a AuthSwitchRequest
-    public void buildAuthSwitchRequest(MysqlSerializer serializer) {
+    public void buildAuthSwitchRequest(MysqlSerializer serializer, String authPluginName) {
         serializer.writeInt1((byte) 0xfe);
-        serializer.writeNulTerminateString(NATIVE_AUTH_PLUGIN_NAME);
+        serializer.writeNulTerminateString(authPluginName);
         serializer.writeBytes(authPluginData);
         serializer.writeInt1(0);
     }

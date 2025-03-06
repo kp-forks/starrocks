@@ -25,16 +25,13 @@
 #include "column/vectorized_fwd.h"
 #include "gutil/casts.h"
 #include "simd/simd.h"
+#include "storage/chunk_helper.h"
 #include "types/logical_type_infra.h"
 #include "util/date_func.h"
 #include "util/percentile_value.h"
 #include "util/phmap/phmap.h"
 
 namespace starrocks {
-
-NullColumnPtr ColumnHelper::one_size_not_null_column = NullColumn::create(1, 0);
-
-NullColumnPtr ColumnHelper::one_size_null_column = NullColumn::create(1, 1);
 
 Filter& ColumnHelper::merge_nullable_filter(Column* column) {
     if (column->is_nullable()) {
@@ -235,6 +232,21 @@ size_t ColumnHelper::last_nonnull(const Column* col, size_t start, size_t end) {
     return end;
 }
 
+int64_t ColumnHelper::find_first_not_equal(Column* column, int64_t target, int64_t start, int64_t end) {
+    while (start + 1 < end) {
+        int64_t mid = start + (end - start) / 2;
+        if (column->compare_at(target, mid, *column, 1) == 0) {
+            start = mid;
+        } else {
+            end = mid;
+        }
+    }
+    if (column->compare_at(target, end - 1, *column, 1) == 0) {
+        return end;
+    }
+    return end - 1;
+}
+
 // expression trees' return column should align return type when some return columns maybe diff from the required
 // return type, as well the null flag. e.g., concat_ws returns col from create_const_null_column(), it's type is
 // Nullable(int8), but required return type is nullable(string), so col need align return type to nullable(string).
@@ -362,6 +374,13 @@ std::pair<bool, size_t> ColumnHelper::num_packed_rows(const Columns& columns) {
     return {all_const, 1};
 }
 
+std::pair<bool, size_t> ColumnHelper::num_packed_rows(const Column* column) {
+    if (column->is_constant()) {
+        return {true, 1};
+    }
+    return {false, column->size()};
+}
+
 using ColumnsConstIterator = Columns::const_iterator;
 bool ColumnHelper::is_all_const(ColumnsConstIterator const& begin, ColumnsConstIterator const& end) {
     for (auto it = begin; it < end; ++it) {
@@ -425,6 +444,17 @@ ColumnPtr ColumnHelper::convert_time_column_from_double_to_str(const ColumnPtr& 
     return res;
 }
 
+std::tuple<UInt32Column::Ptr, ColumnPtr, NullColumnPtr> ColumnHelper::unpack_array_column(const ColumnPtr& column) {
+    DCHECK(!column->is_nullable() && !column->is_constant());
+    DCHECK(column->is_array());
+
+    const ArrayColumn* array_column = down_cast<ArrayColumn*>(column.get());
+    auto elements_column = down_cast<NullableColumn*>(array_column->elements_column().get())->data_column();
+    auto null_column = down_cast<NullableColumn*>(array_column->elements_column().get())->null_column();
+    auto offsets_column = array_column->offsets_column();
+    return {offsets_column, elements_column, null_column};
+}
+
 template <class Ptr>
 bool ChunkSliceTemplate<Ptr>::empty() const {
     return !chunk || offset == chunk->num_rows();
@@ -454,7 +484,7 @@ size_t ChunkSliceTemplate<Ptr>::skip(size_t skip_rows) {
 
 // Cutoff required rows from this chunk
 template <class Ptr>
-Ptr ChunkSliceTemplate<Ptr>::cutoff(size_t required_rows) {
+ChunkUniquePtr ChunkSliceTemplate<Ptr>::cutoff(size_t required_rows) {
     DCHECK(!empty());
     size_t cut_rows = std::min(rows(), required_rows);
     auto res = chunk->clone_empty(cut_rows);
@@ -467,7 +497,31 @@ Ptr ChunkSliceTemplate<Ptr>::cutoff(size_t required_rows) {
     return res;
 }
 
+// Specialized for SegmentedChunkPtr
+template <>
+ChunkUniquePtr ChunkSliceTemplate<SegmentedChunkPtr>::cutoff(size_t required_rows) {
+    DCHECK(!empty());
+    // cutoff a chunk from current segment, if it doesn't meet the requirement just let it be
+    ChunkPtr segment = chunk->segments()[segment_id];
+    size_t segment_offset = offset % chunk->segment_size();
+    size_t cut_rows = std::min(segment->num_rows() - segment_offset, required_rows);
+
+    auto res = segment->clone_empty(cut_rows);
+    res->append(*segment, segment_offset, cut_rows);
+    offset += cut_rows;
+
+    // move to next segment
+    segment_id = offset / chunk->segment_size();
+
+    if (empty()) {
+        chunk->reset();
+        offset = 0;
+    }
+    return res;
+}
+
 template struct ChunkSliceTemplate<ChunkPtr>;
 template struct ChunkSliceTemplate<ChunkUniquePtr>;
+template struct ChunkSliceTemplate<SegmentedChunkPtr>;
 
 } // namespace starrocks

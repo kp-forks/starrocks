@@ -21,6 +21,8 @@ class PercentileValue {
 public:
     PercentileValue() { _type = TDIGEST; }
 
+    explicit PercentileValue(double compression) : _tdigest(compression) { _type = TDIGEST; }
+
     explicit PercentileValue(const Slice& src) {
         switch (*src.data) {
         case PercentileDataType::TDIGEST:
@@ -40,6 +42,8 @@ public:
         //_type 1 bytes
         return 1 + _tdigest.serialize_size();
     }
+
+    uint64_t mem_usage() const { return 1 + _tdigest.serialize_size(); }
 
     size_t serialize(uint8_t* writer) const {
         *(writer) = _type;

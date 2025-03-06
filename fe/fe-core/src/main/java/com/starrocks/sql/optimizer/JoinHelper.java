@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package com.starrocks.sql.optimizer;
 
 import com.google.common.base.Preconditions;
@@ -106,7 +105,8 @@ public class JoinHelper {
             if (leftChildColumns.containsAll(leftUsedColumns) && rightChildColumns.containsAll(rightUsedColumns)) {
                 leftOnCols.add(new DistributionCol(leftUsedColumns.getFirstId(), nullStrict, leftTableAggStrict));
                 rightOnCols.add(new DistributionCol(rightUsedColumns.getFirstId(), nullStrict, rightTableAggStrict));
-            } else if (leftChildColumns.containsAll(rightUsedColumns) && rightChildColumns.containsAll(leftUsedColumns)) {
+            } else if (leftChildColumns.containsAll(rightUsedColumns) &&
+                    rightChildColumns.containsAll(leftUsedColumns)) {
                 leftOnCols.add(new DistributionCol(rightUsedColumns.getFirstId(), nullStrict, leftTableAggStrict));
                 rightOnCols.add(new DistributionCol(leftUsedColumns.getFirstId(), nullStrict, rightTableAggStrict));
             } else {
@@ -142,7 +142,7 @@ public class JoinHelper {
 
     public boolean onlyShuffle() {
         return type.isRightJoin() || type.isFullOuterJoin() || JoinOperator.HINT_SHUFFLE.equals(hint) ||
-                JoinOperator.HINT_BUCKET.equals(hint);
+                JoinOperator.HINT_BUCKET.equals(hint) || JoinOperator.HINT_SKEW.equals(hint);
     }
 
     public static List<BinaryPredicateOperator> getEqualsPredicate(ColumnRefSet leftColumns, ColumnRefSet rightColumns,
@@ -179,6 +179,7 @@ public class JoinHelper {
         }
         return Pair.create(lhsEqRhsOnPredicates, onPredicates);
     }
+
 
     /**
      * Conditions should contain:

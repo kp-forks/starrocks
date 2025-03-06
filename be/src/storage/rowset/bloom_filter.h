@@ -45,11 +45,33 @@
 #include "util/murmur_hash3.h"
 
 namespace starrocks {
+class Slice;
 
+static const std::string FPP_KEY = "bloom_filter_fpp";
+static const std::string GRAM_NUM_KEY = "gram_num";
+static const std::string CASE_SENSITIVE_KEY = "case_sensitive";
+// used in write
 struct BloomFilterOptions {
     // false positive probablity
     double fpp = 0.05;
     HashStrategyPB strategy = HASH_MURMUR3_X64_64;
+    bool use_ngram = false;
+    // only use when use_ngram is true
+    size_t gram_num = 0;
+    bool case_sensitive = true;
+};
+
+// used in read from ngram bloom filter
+struct NgramBloomFilterReaderOptions {
+    size_t index_gram_num = 0;
+    bool index_case_sensitive = true;
+};
+
+struct NgramBloomFilterState {
+    bool initialized = false;
+    // whether this index can be used for predicate or not
+    bool index_useful = false;
+    std::vector<std::string> ngram_set;
 };
 
 // Base class for bloom filter
@@ -150,13 +172,15 @@ public:
     virtual void add_hash(uint64_t hash) = 0;
     virtual bool test_hash(uint64_t hash) const = 0;
 
+    static uint32_t estimate_bytes(uint64_t n, double fpp) { return _optimal_bit_num(n, fpp) / 8 + 1; }
+
 private:
     // Compute the optimal bit number according to the following rule:
     //     m = -n * ln(fpp) / (ln(2) ^ 2)
     // n: expected distinct record number
     // fpp: false positive probablity
     // the result will be power of 2
-    uint32_t _optimal_bit_num(uint64_t n, double fpp);
+    static uint32_t _optimal_bit_num(uint64_t n, double fpp);
 
 protected:
     // bloom filter data
