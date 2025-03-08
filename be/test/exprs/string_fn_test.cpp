@@ -22,9 +22,10 @@
 #include "exprs/function_helper.h"
 #include "exprs/mock_vectorized_expr.h"
 #include "exprs/string_functions.h"
-#include "runtime/large_int_value.h"
+#include "runtime/types.h"
 #include "testutil/assert.h"
 #include "testutil/parallel_test.h"
+#include "types/large_int_value.h"
 
 namespace starrocks {
 
@@ -45,9 +46,9 @@ PARALLEL_TEST(VecStringFunctionsTest, substringNormalTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     for (int j = 0; j < 20; ++j) {
         str->append("test" + std::to_string(j));
         pos->append(5);
@@ -73,9 +74,9 @@ PARALLEL_TEST(VecStringFunctionsTest, substringChineseTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     for (int j = 0; j < 20; ++j) {
         str->append("我是中文字符串！！！" + std::to_string(j));
         pos->append(3);
@@ -101,9 +102,9 @@ PARALLEL_TEST(VecStringFunctionsTest, substringleftTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     for (int j = 0; j < 10; ++j) {
         str->append("我是中文字符串" + std::to_string(j));
         pos->append(-2);
@@ -126,7 +127,7 @@ PARALLEL_TEST(VecStringFunctionsTest, substringleftTest) {
 }
 
 PARALLEL_TEST(VecStringFunctionsTest, substrConstASCIITest) {
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     str->append("123456789");
     str->append("");
     std::vector<std::tuple<int, int, std::string>> cases = {
@@ -156,7 +157,7 @@ PARALLEL_TEST(VecStringFunctionsTest, substrConstASCIITest) {
 }
 
 PARALLEL_TEST(VecStringFunctionsTest, substrConstZhTest) {
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     str->append("壹贰叁肆伍陆柒捌玖");
     str->append("");
 
@@ -203,7 +204,7 @@ PARALLEL_TEST(VecStringFunctionsTest, substrConstZhTest) {
 }
 
 PARALLEL_TEST(VecStringFunctionsTest, substrConstUtf8Test) {
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     std::string s;
     s.append("\x7f");
     s.append("\xdf\xbf");
@@ -289,9 +290,9 @@ PARALLEL_TEST(VecStringFunctionsTest, substringOverleftTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     for (int j = 0; j < 20; ++j) {
         str->append("我是中文字符串" + std::to_string(j));
         pos->append(-100);
@@ -317,9 +318,9 @@ PARALLEL_TEST(VecStringFunctionsTest, substringConstTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     pos->append(5);
     len->append(2);
 
@@ -346,8 +347,8 @@ PARALLEL_TEST(VecStringFunctionsTest, substringNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto pos = Int32Column::create();
-    auto len = Int32Column::create();
+    Int32Column::Ptr pos = Int32Column::create();
+    Int32Column::Ptr len = Int32Column::create();
     pos->append(5);
     len->append(2);
 
@@ -381,10 +382,10 @@ PARALLEL_TEST(VecStringFunctionsTest, substringNullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, concatNormalTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str1 = BinaryColumn::create();
-    auto str2 = BinaryColumn::create();
-    auto str3 = BinaryColumn::create();
-    auto str4 = BinaryColumn::create();
+    BinaryColumn::Ptr str1 = BinaryColumn::create();
+    BinaryColumn::Ptr str2 = BinaryColumn::create();
+    BinaryColumn::Ptr str3 = BinaryColumn::create();
+    BinaryColumn::Ptr str4 = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str1->append("test");
         str2->append(std::to_string(j));
@@ -411,10 +412,10 @@ PARALLEL_TEST(VecStringFunctionsTest, concatNormalTest) {
 PARALLEL_TEST(VecStringFunctionsTest, concatConstTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str1 = BinaryColumn::create();
-    auto str2 = BinaryColumn::create();
-    auto str3 = BinaryColumn::create();
-    auto str4 = BinaryColumn::create();
+    BinaryColumn::Ptr str1 = BinaryColumn::create();
+    BinaryColumn::Ptr str2 = BinaryColumn::create();
+    BinaryColumn::Ptr str3 = BinaryColumn::create();
+    BinaryColumn::Ptr str4 = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str1->append("test" + std::to_string(j));
     }
@@ -441,11 +442,11 @@ PARALLEL_TEST(VecStringFunctionsTest, concatConstTest) {
 PARALLEL_TEST(VecStringFunctionsTest, concatNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str1 = BinaryColumn::create();
-    auto str2 = BinaryColumn::create();
-    auto str3 = BinaryColumn::create();
-    auto str4 = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str1 = BinaryColumn::create();
+    BinaryColumn::Ptr str2 = BinaryColumn::create();
+    BinaryColumn::Ptr str3 = BinaryColumn::create();
+    BinaryColumn::Ptr str4 = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
     for (int j = 0; j < 20; ++j) {
         str1->append("test");
         str2->append(std::to_string(j));
@@ -480,7 +481,7 @@ PARALLEL_TEST(VecStringFunctionsTest, lowerNormalTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append("TEST" + std::to_string(j));
     }
@@ -502,7 +503,7 @@ PARALLEL_TEST(VecStringFunctionsTest, nullOrEmpty) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     str->append("");
     str->append(" ");
     str->append("hello");
@@ -529,9 +530,9 @@ PARALLEL_TEST(VecStringFunctionsTest, split) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto delim = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr delim = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     str->append("1,2,3");
     delim->append(",");
@@ -560,15 +561,15 @@ PARALLEL_TEST(VecStringFunctionsTest, split) {
     delim->append(",");
     null->append(1);
 
-    auto null_column = NullableColumn::create(str, null);
+    NullableColumn::Ptr null_column = NullableColumn::create(str, null);
     columns.emplace_back(null_column);
     columns.emplace_back(delim);
     result = StringFunctions::split(ctx.get(), columns).value();
     ASSERT_EQ("[['1','2','3'], ['aa','bb','cc'], ['a','b','c'], ['',''], NULL]", result->debug_string());
 
     //two const param
-    auto str_const = ConstColumn::create(BinaryColumn::create());
-    auto delim_const = ConstColumn::create(BinaryColumn::create());
+    ConstColumn::Ptr str_const = ConstColumn::create(BinaryColumn::create());
+    ConstColumn::Ptr delim_const = ConstColumn::create(BinaryColumn::create());
     str_const->append_datum("a,bc,d,eeee,f");
     delim_const->append_datum(",");
     columns.clear();
@@ -585,8 +586,8 @@ PARALLEL_TEST(VecStringFunctionsTest, splitConst1) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str_const = ConstColumn::create(BinaryColumn::create());
-    auto delim_const = ConstColumn::create(BinaryColumn::create());
+    ConstColumn::Ptr str_const = ConstColumn::create(BinaryColumn::create());
+    ConstColumn::Ptr delim_const = ConstColumn::create(BinaryColumn::create());
     str_const->append_datum("a,bc,d,eeee,f");
     delim_const->append_datum(",d,");
     columns.clear();
@@ -603,8 +604,8 @@ PARALLEL_TEST(VecStringFunctionsTest, splitConst2) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto delim_const = ConstColumn::create(BinaryColumn::create());
-    auto str_binary_column = BinaryColumn::create();
+    ConstColumn::Ptr delim_const = ConstColumn::create(BinaryColumn::create());
+    BinaryColumn::Ptr str_binary_column = BinaryColumn::create();
 
     str_binary_column->append("a,b,c");
     str_binary_column->append("aa,bb,cc");
@@ -628,9 +629,9 @@ PARALLEL_TEST(VecStringFunctionsTest, splitChinese) {
         std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
         Columns columns;
 
-        auto str = BinaryColumn::create();
-        auto delim = BinaryColumn::create();
-        auto null = NullColumn::create();
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        BinaryColumn::Ptr delim = BinaryColumn::create();
+        NullColumn::Ptr null = NullColumn::create();
 
         str->append("1上海,北,京");
         delim->append(",");
@@ -662,8 +663,8 @@ PARALLEL_TEST(VecStringFunctionsTest, splitChinese) {
         std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
         Columns columns;
 
-        auto delim_const = ConstColumn::create(BinaryColumn::create());
-        auto str_binary_column = BinaryColumn::create();
+        ConstColumn::Ptr delim_const = ConstColumn::create(BinaryColumn::create());
+        BinaryColumn::Ptr str_binary_column = BinaryColumn::create();
 
         str_binary_column->append("a地 区b");
         str_binary_column->append("");
@@ -702,8 +703,8 @@ PARALLEL_TEST(VecStringFunctionsTest, splitChinese) {
             std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
             Columns columns;
 
-            auto src_const = ConstColumn::create(BinaryColumn::create());
-            auto delim_const = ConstColumn::create(BinaryColumn::create());
+            ConstColumn::Ptr src_const = ConstColumn::create(BinaryColumn::create());
+            ConstColumn::Ptr delim_const = ConstColumn::create(BinaryColumn::create());
 
             src_const->append_datum(Slice(src));
             delim_const->append_datum(Slice(delimiter));
@@ -726,11 +727,11 @@ PARALLEL_TEST(VecStringFunctionsTest, splitChinese) {
 
 TypeDescriptor array_type(const LogicalType& child_type);
 
-PARALLEL_TEST(VecStringFunctionsTest, str_to_map) {
+PARALLEL_TEST(VecStringFunctionsTest, str_to_map_v1) {
     // input array<string>
     int chunk_size = 7;
     TypeDescriptor TYPE_ARRAY_VARCHAR = array_type(TYPE_VARCHAR);
-    auto array_str_null = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
+    ColumnPtr array_str_null = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, true);
     // []
     // NULL
     // ['NULL']
@@ -742,7 +743,13 @@ PARALLEL_TEST(VecStringFunctionsTest, str_to_map) {
     array_str_null->append_datum(Datum(DatumArray{Datum("a:c:b:d"), Datum(""), Datum("")}));
     array_str_null->append_datum(Datum(DatumArray{Datum("ab:b"), Datum("ab:b"), Datum("")}));
 
-    auto array_str_notnull = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, false);
+    std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+    TypeDescriptor string_type_desc = TypeDescriptor::create_varchar_type(10);
+    ColumnPtr string_column = ColumnHelper::create_column(string_type_desc, true);
+    string_column->append_datum("a:b,c:d");
+    string_column->append_datum("a:1,b:2");
+
+    ColumnPtr array_str_notnull = ColumnHelper::create_column(TYPE_ARRAY_VARCHAR, false);
     array_str_notnull->append_datum(Datum(DatumArray{}));
     array_str_notnull->append_datum(Datum(DatumArray{Datum("中国:shang海")}));
     array_str_notnull->append_datum(Datum(DatumArray{Datum()}));
@@ -752,7 +759,7 @@ PARALLEL_TEST(VecStringFunctionsTest, str_to_map) {
     array_str_notnull->append_datum(Datum(DatumArray{Datum("a:c:b:d"), Datum(""), Datum("")}));
     array_str_notnull->append_datum(Datum(DatumArray{Datum("ab:b"), Datum("ab:b"), Datum("")}));
 
-    auto only_null = ColumnHelper::create_const_null_column(chunk_size);
+    ColumnPtr only_null = ColumnHelper::create_const_null_column(chunk_size);
 
     // delimiters
 
@@ -764,7 +771,10 @@ PARALLEL_TEST(VecStringFunctionsTest, str_to_map) {
     map_delimiter_builder_nullable.append(":b");
     map_delimiter_builder_nullable.append("");
     map_delimiter_builder_nullable.append_null();
-    auto map_delimiter_nullable = map_delimiter_builder_nullable.build_nullable_column();
+    ColumnPtr map_delimiter_nullable = map_delimiter_builder_nullable.build_nullable_column();
+    ColumnPtr delimiter_column = ColumnHelper::create_column(string_type_desc, true);
+    delimiter_column->append_datum(",");
+    delimiter_column->append_datum(",");
 
     auto map_delimiter_builder_notnull = ColumnBuilder<TYPE_VARCHAR>(chunk_size);
     map_delimiter_builder_notnull.append(":");
@@ -774,92 +784,98 @@ PARALLEL_TEST(VecStringFunctionsTest, str_to_map) {
     map_delimiter_builder_notnull.append(":b");
     map_delimiter_builder_notnull.append("");
     map_delimiter_builder_notnull.append("");
-    auto map_delimiter_notnull = map_delimiter_builder_notnull.build(false);
+    ColumnPtr map_delimiter_notnull = map_delimiter_builder_notnull.build(false);
 
-    auto empty_col = BinaryColumn::create();
+    BinaryColumn::Ptr empty_col = BinaryColumn::create();
     empty_col->append_datum("");
-    auto delim_const_empty = ConstColumn::create(empty_col, chunk_size);
+    ConstColumn::Ptr delim_const_empty = ConstColumn::create(empty_col, chunk_size);
 
-    auto ch_col = BinaryColumn::create();
+    BinaryColumn::Ptr ch_col = BinaryColumn::create();
     ch_col->append_datum("中");
-    auto delim_const_ch = ConstColumn::create(ch_col, chunk_size);
+    ConstColumn::Ptr delim_const_ch = ConstColumn::create(ch_col, chunk_size);
 
-    auto const_col = BinaryColumn::create();
+    BinaryColumn::Ptr const_col = BinaryColumn::create();
     const_col->append_datum(":");
-    auto delim_const = ConstColumn::create(const_col, chunk_size);
+    ConstColumn::Ptr delim_const = ConstColumn::create(const_col, chunk_size);
 
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, only_null}).value();
+        Columns columns{string_column, delimiter_column, map_delimiter_nullable};
+        ctx->set_constant_columns(columns);
+        auto res = StringFunctions::str_to_map(ctx.get(), columns).value();
+        ASSERT_EQ(res->debug_string(), "[{'a':'b','c':'d'}, {'a':'1','b':'2'}]");
+    }
+    {
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, only_null}).value();
         ASSERT_EQ(res->debug_string(), "CONST: NULL Size : 7");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, map_delimiter_nullable}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, map_delimiter_nullable}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, NULL, {'NULL':NULL}, {'ab':'b','':NULL}, {'a':'中囸','道c:d过’':NULL}, "
                   "{'a':':c:b:d','':NULL}, NULL]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, map_delimiter_notnull}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, map_delimiter_notnull}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, NULL, {'NULL':NULL}, {'ab':'b','':NULL}, {'a':'中囸','道c:d过’':NULL}, "
                   "{'a':':c:b:d','':NULL}, {'a':'b:b','':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, delim_const_empty}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, delim_const_empty}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, NULL, {'N':'ULL'}, {'a':'b:b','':NULL}, {'a':':b中囸','道':'c:d过’'}, "
                   "{'a':':c:b:d','':NULL}, {'a':'b:b','':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, delim_const_ch}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, delim_const_ch}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, NULL, {'NULL':NULL}, {'ab:b':NULL,'':NULL}, {'a:b':'囸','道c:d过’':NULL}, "
                   "{'a:c:b:d':NULL,'':NULL}, {'ab:b':NULL,'':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_null, delim_const}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_null, delim_const}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, NULL, {'NULL':NULL}, {'ab':'b','':NULL}, {'a':'b中囸','道c':'d过’'}, "
                   "{'a':'c:b:d','':NULL}, {'ab':'b','':NULL}]");
     }
     ///
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, only_null}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, only_null}).value();
         ASSERT_EQ(res->debug_string(), "CONST: NULL Size : 7");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, map_delimiter_nullable}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, map_delimiter_nullable}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, {'中国':'shang海'}, {'':NULL}, {'ab':'b','':NULL}, "
                   "{'a':'中囸','道c:d过’':NULL,'道c:d过':NULL}, {'a':':c:b:d','':NULL}, NULL]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, map_delimiter_notnull}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, map_delimiter_notnull}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, {'中':':shang海'}, {'':NULL}, {'ab':'b','':NULL}, "
                   "{'a':'中囸','道c:d过’':NULL,'道c:d过':NULL}, {'a':':c:b:d','':NULL}, {'a':'b:b','':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, delim_const_empty}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, delim_const_empty}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, {'中':'国:shang海'}, {'':NULL}, {'a':'b:b','':NULL}, {'a':':b中囸','道':'c:d过'}, "
                   "{'a':':c:b:d','':NULL}, {'a':'b:b','':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, delim_const_ch}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, delim_const_ch}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, {'':'国:shang海'}, {'':NULL}, {'ab:b':NULL,'':NULL}, "
                   "{'a:b':'囸','道c:d过’':NULL,'道c:d过':NULL}, {'a:c:b:d':NULL,'':NULL}, {'ab:b':NULL,'':NULL}]");
     }
     {
-        auto res = StringFunctions::str_to_map(nullptr, {array_str_notnull, delim_const}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {array_str_notnull, delim_const}).value();
         ASSERT_EQ(res->debug_string(),
                   "[{'':NULL}, {'中国':'shang海'}, {'':NULL}, {'ab':'b','':NULL}, {'a':'b中囸','道c':'d过'}, "
                   "{'a':'c:b:d','':NULL}, {'ab':'b','':NULL}]");
     }
     ///
     {
-        auto res = StringFunctions::str_to_map(nullptr, {only_null, only_null}).value();
+        auto res = StringFunctions::str_to_map_v1(nullptr, {only_null, only_null}).value();
         ASSERT_EQ(res->debug_string(), "CONST: NULL Size : 7");
     }
 }
@@ -868,9 +884,9 @@ PARALLEL_TEST(VecStringFunctionsTest, splitPart) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto delim = BinaryColumn::create();
-    auto field = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr delim = BinaryColumn::create();
+    Int32Column::Ptr field = Int32Column::create();
 
     // 0
     str->append("hello word");
@@ -1059,8 +1075,8 @@ PARALLEL_TEST(VecStringFunctionsTest, leftTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto inx = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr inx = Int32Column::create();
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "TEST");
         inx->append(j);
@@ -1088,8 +1104,8 @@ PARALLEL_TEST(VecStringFunctionsTest, rightTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto inx = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    Int32Column::Ptr inx = Int32Column::create();
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "TEST");
         inx->append(j);
@@ -1116,8 +1132,8 @@ PARALLEL_TEST(VecStringFunctionsTest, rightTest) {
 PARALLEL_TEST(VecStringFunctionsTest, startsWithTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto prefix = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr prefix = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "TEST");
         prefix->append(std::to_string(j % 10) + "T");
@@ -1143,9 +1159,9 @@ PARALLEL_TEST(VecStringFunctionsTest, startsWithTest) {
 PARALLEL_TEST(VecStringFunctionsTest, startsWithNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto prefix = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr prefix = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "TEST");
@@ -1179,9 +1195,9 @@ PARALLEL_TEST(VecStringFunctionsTest, startsWithNullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, endsWithNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto suffix = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr suffix = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append("TEST" + std::to_string(j));
@@ -1215,8 +1231,8 @@ PARALLEL_TEST(VecStringFunctionsTest, endsWithNullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto pad = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pad = BinaryColumn::create();
 
     str->append("qwer");
     pad->append("r");
@@ -1243,8 +1259,8 @@ PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentTest) {
 PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto pad = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pad = BinaryColumn::create();
 
     str->append("qwer");
     pad->append("rw");
@@ -1266,8 +1282,8 @@ PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentNullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentUTF8Test) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto pad = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pad = BinaryColumn::create();
 
     str->append("中国");
     pad->append("a");
@@ -1290,8 +1306,8 @@ PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentUTF8Test) {
 PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentUTF8NullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto pad = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pad = BinaryColumn::create();
 
     str->append("中国");
     pad->append("国");
@@ -1313,7 +1329,7 @@ PARALLEL_TEST(VecStringFunctionsTest, appendTrailingCharIfAbsentUTF8NullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, lengthTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j));
     }
@@ -1337,7 +1353,7 @@ PARALLEL_TEST(VecStringFunctionsTest, lengthTest) {
 PARALLEL_TEST(VecStringFunctionsTest, lengthChineseTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append("中文" + std::to_string(j));
     }
@@ -1361,7 +1377,7 @@ PARALLEL_TEST(VecStringFunctionsTest, lengthChineseTest) {
 PARALLEL_TEST(VecStringFunctionsTest, utf8LengthTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j));
     }
@@ -1385,7 +1401,7 @@ PARALLEL_TEST(VecStringFunctionsTest, utf8LengthTest) {
 PARALLEL_TEST(VecStringFunctionsTest, utf8LengthChineseTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append("中文" + std::to_string(j));
     }
@@ -1409,7 +1425,7 @@ PARALLEL_TEST(VecStringFunctionsTest, utf8LengthChineseTest) {
 PARALLEL_TEST(VecStringFunctionsTest, upperTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     for (int j = 0; j < 20; ++j) {
         str->append("abcd" + std::to_string(j));
     }
@@ -1429,7 +1445,7 @@ PARALLEL_TEST(VecStringFunctionsTest, upperTest) {
 PARALLEL_TEST(VecStringFunctionsTest, caseToggleTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto src = BinaryColumn::create();
+    BinaryColumn::Ptr src = BinaryColumn::create();
     src->append("");
     src->append("a");
     src->append("1");
@@ -1472,7 +1488,7 @@ PARALLEL_TEST(VecStringFunctionsTest, caseToggleTest) {
 PARALLEL_TEST(VecStringFunctionsTest, asciiTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
 
     str->append("qwer");
     str->append("qwe");
@@ -1493,7 +1509,7 @@ PARALLEL_TEST(VecStringFunctionsTest, asciiTest) {
 PARALLEL_TEST(VecStringFunctionsTest, charTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = Int32Column::create();
+    Int32Column::Ptr str = Int32Column::create();
 
     str->append(65);
     str->append(66);
@@ -1517,11 +1533,50 @@ PARALLEL_TEST(VecStringFunctionsTest, charTest) {
     ASSERT_EQ("~", v->get_data()[5].to_string());
 }
 
+PARALLEL_TEST(VecStringFunctionsTest, inetAtonInvalidIPv4Test) {
+    std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+
+    Columns columns;
+    BinaryColumn::Ptr input_column = BinaryColumn::create();
+    input_column->append("999.999.999.999");
+    input_column->append("abc.def.ghi.jkl");
+    input_column->append("192.168.1.1.1");
+    input_column->append("192.168.1");
+    input_column->append("");
+    columns.emplace_back(input_column);
+
+    auto result = StringFunctions::inet_aton(ctx.get(), columns).value();
+
+    ASSERT_TRUE(result->is_null(0));
+    ASSERT_TRUE(result->is_null(1));
+    ASSERT_TRUE(result->is_null(2));
+    ASSERT_TRUE(result->is_null(3));
+    ASSERT_TRUE(result->is_null(4));
+}
+
+PARALLEL_TEST(VecStringFunctionsTest, inetAtonValidIPv4Test) {
+    std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+
+    Columns columns;
+    BinaryColumn::Ptr input_column = BinaryColumn::create();
+    input_column->append("192.168.1.1");
+    input_column->append("0.0.0.0");
+    input_column->append("255.255.255.255");
+    columns.emplace_back(input_column);
+
+    auto result = StringFunctions::inet_aton(ctx.get(), columns).value();
+
+    auto res_column = ColumnHelper::cast_to<TYPE_BIGINT>(result);
+    ASSERT_EQ(3232235777, res_column->get_data()[0]);
+    ASSERT_EQ(0, res_column->get_data()[1]);
+    ASSERT_EQ(4294967295, res_column->get_data()[2]);
+}
+
 PARALLEL_TEST(VecStringFunctionsTest, instrTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto sub = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr sub = BinaryColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append("abcd" + std::to_string(j));
@@ -1544,8 +1599,8 @@ PARALLEL_TEST(VecStringFunctionsTest, instrTest) {
 PARALLEL_TEST(VecStringFunctionsTest, instrChineseTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto sub = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr sub = BinaryColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append("中文字符" + std::to_string(j));
@@ -1568,9 +1623,9 @@ PARALLEL_TEST(VecStringFunctionsTest, instrChineseTest) {
 PARALLEL_TEST(VecStringFunctionsTest, locateNullTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto sub = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr sub = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append("abcd" + std::to_string(j));
@@ -1599,9 +1654,9 @@ PARALLEL_TEST(VecStringFunctionsTest, locateNullTest) {
 PARALLEL_TEST(VecStringFunctionsTest, locatePosTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto sub = BinaryColumn::create();
-    auto pos = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr sub = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "abcd" + std::to_string(j));
@@ -1630,9 +1685,9 @@ PARALLEL_TEST(VecStringFunctionsTest, locatePosTest) {
 PARALLEL_TEST(VecStringFunctionsTest, locatePosChineseTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto sub = BinaryColumn::create();
-    auto pos = Int32Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr sub = BinaryColumn::create();
+    Int32Column::Ptr pos = Int32Column::create();
 
     for (int j = 0; j < 20; ++j) {
         str->append(std::to_string(j) + "中文字符" + std::to_string(j));
@@ -1662,12 +1717,12 @@ PARALLEL_TEST(VecStringFunctionsTest, concatWsTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto step = BinaryColumn::create();
-    auto str1 = BinaryColumn::create();
-    auto str2 = BinaryColumn::create();
-    auto str3 = BinaryColumn::create();
+    BinaryColumn::Ptr step = BinaryColumn::create();
+    BinaryColumn::Ptr str1 = BinaryColumn::create();
+    BinaryColumn::Ptr str2 = BinaryColumn::create();
+    BinaryColumn::Ptr str3 = BinaryColumn::create();
 
-    auto null = NullColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         step->append("|");
@@ -1701,12 +1756,12 @@ PARALLEL_TEST(VecStringFunctionsTest, concatWs1Test) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
 
-    auto step = BinaryColumn::create();
-    auto str1 = BinaryColumn::create();
-    auto str2 = BinaryColumn::create();
-    auto str3 = BinaryColumn::create();
+    BinaryColumn::Ptr step = BinaryColumn::create();
+    BinaryColumn::Ptr str1 = BinaryColumn::create();
+    BinaryColumn::Ptr str2 = BinaryColumn::create();
+    BinaryColumn::Ptr str3 = BinaryColumn::create();
 
-    auto null = NullColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     for (int j = 0; j < 20; ++j) {
         step->append("-----");
@@ -1739,8 +1794,8 @@ PARALLEL_TEST(VecStringFunctionsTest, concatWs1Test) {
 PARALLEL_TEST(VecStringFunctionsTest, findInSetTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto str = BinaryColumn::create();
-    auto strlist = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr strlist = BinaryColumn::create();
 
     str->append("b");
     strlist->append("a,b,c");
@@ -1794,10 +1849,10 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractNullablePattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto null = NullColumn::create();
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrryE", "hitdeciCsiondlist", "hitdecCisiondlist"};
     int indexs[] = {1, 2, 1, 2};
@@ -1845,9 +1900,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractOnlyNullPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    Int64Column::Ptr index = Int64Column::create();
 
     int length = 4;
 
@@ -1881,9 +1936,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractConstPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("([[:lower:]]+)C([[:lower:]]+)", 1);
-    auto index = Int64Column::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrryE", "hitdeciCsiondlist", "hitdecCisiondlist"};
     int indexs[] = {1, 2, 1, 2};
@@ -1922,9 +1977,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtract) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCDdrrryE", "hitdecisiondlist", "hitdecisiondlist"};
     std::string ptns[] = {"([[:lower:]]+)C([[:lower:]]+)", "([[:lower:]]+)CD([[:lower:]]+)", "(i)(.*?)(e)",
@@ -1966,10 +2021,10 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplaceNullablePattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto null = NullColumn::create();
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     std::string strs[] = {"a b c", "a sdfwe b c"};
     std::string replaces[] = {"-", "<\\1>"};
@@ -2012,9 +2067,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplaceOnlyNullPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     std::string strs[] = {"a b c", "a sdfwe b c"};
     std::string replaces[] = {"-", "<\\1>"};
@@ -2051,9 +2106,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplaceConstPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto ptn = ColumnHelper::create_const_column<TYPE_VARCHAR>("( )", 1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     std::string strs[] = {"a b c", "a sdfwe b c"};
     std::string replaces[] = {"-", "<\\1>"};
@@ -2093,7 +2148,7 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplaceConstPattern) {
         std::unique_ptr<char[]> binary_datas = std::make_unique<char[]>(binary_size);
         memset(binary_datas.get(), 0xff, binary_size);
 
-        auto par0 = BinaryColumn::create();
+        BinaryColumn::Ptr par0 = BinaryColumn::create();
         auto par1 = ColumnHelper::create_const_column<TYPE_VARCHAR>(Slice(binary_datas.get(), binary_size), 1);
 
         ctx0->set_constant_columns({par0, par1});
@@ -2109,9 +2164,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplace) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto ptn = BinaryColumn::create();
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr ptn = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     std::string strs[] = {"a b c", "a b c"};
     std::string ptns[] = {" ", "(b)"};
@@ -2152,9 +2207,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpReplaceWithEmptyPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto ptn = ColumnHelper::create_const_column<TYPE_VARCHAR>("", 1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     std::string strs[] = {"yyyy-mm-dd", "yyyy-mm-dd"};
     std::string replaces[] = {"CHINA", "CHINA"};
@@ -2194,10 +2249,10 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceNullablePattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto null = NullColumn::create();
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     const std::string strs[] = {"a u z", "a sdfwe b c", "a equals c"};
     const std::string replaces[] = {"Ü", " ", ""};
@@ -2243,9 +2298,9 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceOnlyNullPattern1) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     const std::string strs[] = {"a b c", "a sdfwe b c"};
 
@@ -2280,9 +2335,9 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceOnlyNullPattern2) {
 
     Columns columns;
 
-    auto str = ColumnHelper::create_const_null_column(2);
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto replace = ColumnHelper::create_const_null_column(1);
+    ColumnPtr str = ColumnHelper::create_const_null_column(2);
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    ColumnPtr replace = ColumnHelper::create_const_null_column(1);
 
     columns.emplace_back(str);
     columns.emplace_back(pattern);
@@ -2311,8 +2366,8 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceOnlyNullPattern2) {
     Columns columns;
 
     auto str = ColumnHelper::create_const_column<TYPE_VARCHAR>("a b c", 2);
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto replace = ColumnHelper::create_const_null_column(1);
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    ColumnPtr replace = ColumnHelper::create_const_null_column(1);
 
     columns.emplace_back(str);
     columns.emplace_back(pattern);
@@ -2339,9 +2394,9 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceConstPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto ptn = ColumnHelper::create_const_column<TYPE_VARCHAR>(" ", 1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     const std::string strs[] = {"a b c", "a sdfwe b c"};
     const std::string replaces[] = {"-", "< > "};
@@ -2382,7 +2437,7 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceConstColumn1) {
 
     auto str = ColumnHelper::create_const_column<TYPE_VARCHAR>("a b c", 2);
     auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>(" ", 1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
     const std::string replaces[] = {"-", "+"};
     for (int i = 0; i < sizeof(replaces) / sizeof(replaces[0]); ++i) {
         replace->append(replaces[i]);
@@ -2448,9 +2503,9 @@ PARALLEL_TEST(VecStringFunctionsTest, replace) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto ptn = BinaryColumn::create();
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr ptn = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     const std::string strs[] = {"a b c", "a . c", "a b c", "abc?", "xyz"};
     const std::string ptns[] = {" ", ".", "^a", "abc?", "z$"};
@@ -2490,9 +2545,9 @@ PARALLEL_TEST(VecStringFunctionsTest, replaceWithEmptyPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto ptn = ColumnHelper::create_const_column<TYPE_VARCHAR>("", 1);
-    auto replace = BinaryColumn::create();
+    BinaryColumn::Ptr replace = BinaryColumn::create();
 
     const std::string strs[] = {"yyyy-mm-dd", "*starrocks."};
     const std::string replaces[] = {"CHINA", "CHINA"};
@@ -2529,7 +2584,7 @@ PARALLEL_TEST(VecStringFunctionsTest, moneyFormatDouble) {
     std::string results[] = {"1,234.46", "1,234.45", "1,234.40", "1,234.45"};
 
     Columns columns;
-    auto money = DoubleColumn::create();
+    DoubleColumn::Ptr money = DoubleColumn::create();
 
     for (double i : moneys) money->append(i);
 
@@ -2547,7 +2602,7 @@ PARALLEL_TEST(VecStringFunctionsTest, moneyFormatBigInt) {
     std::string results[] = {"123,456.00", "-123,456.00", "9,223,372,036,854,775,807.00"};
 
     Columns columns;
-    auto money = Int64Column::create();
+    Int64Column::Ptr money = Int64Column::create();
 
     for (long i : moneys) money->append(i);
 
@@ -2574,7 +2629,7 @@ PARALLEL_TEST(VecStringFunctionsTest, moneyFormatLargeInt) {
                              "170,141,183,460,469,231,731,687,303,715,884,105,723.00"};
 
     Columns columns;
-    auto money = Int128Column::create();
+    Int128Column::Ptr money = Int128Column::create();
 
     for (__int128 i : moneys) {
         money->append(i);
@@ -2598,7 +2653,7 @@ PARALLEL_TEST(VecStringFunctionsTest, moneyFormatDecimalV2Value) {
     std::string results[] = {"3,333,333,333.22", "-740,740,740.72"};
 
     Columns columns;
-    auto money = DecimalColumn::create();
+    DecimalColumn::Ptr money = DecimalColumn::create();
 
     for (auto i : moneys) {
         money->append(i);
@@ -2617,9 +2672,9 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrlNullable) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto data = BinaryColumn::create();
-    auto null = NullColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr data = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
 
     std::string strs[] = {"http://cccccc:password@hostname/dsfsf?vdv=value#xcvxv",
                           "http://werwrw:sdf@sdfsceesvdsdvs/ccvwfewf?cvx=value#sdfs",
@@ -2661,8 +2716,8 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrlOnlyNull) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto part = ColumnHelper::create_const_null_column(1);
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    ColumnPtr part = ColumnHelper::create_const_null_column(1);
 
     std::string strs[] = {"http://cccccc:password@hostname/dsfsf?vdv=value#xcvxv",
                           "http://werwrw:sdf@hostname/path?cvx=value#sdfs",
@@ -2697,7 +2752,7 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrlForConst) {
 
         Columns columns;
 
-        auto str = BinaryColumn::create();
+        BinaryColumn::Ptr str = BinaryColumn::create();
         auto part = ColumnHelper::create_const_column<TYPE_VARCHAR>("AUTHORITY", 1);
 
         std::string strs[] = {"http://username:password@hostname/path?arg=value#anchor",
@@ -2736,7 +2791,7 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrlForConst) {
 
         Columns columns;
 
-        auto str = BinaryColumn::create();
+        BinaryColumn::Ptr str = BinaryColumn::create();
         auto part = ColumnHelper::create_const_column<TYPE_VARCHAR>("PATH", 1);
 
         std::string strs[] = {"http://useraadfname:password@hostname/path?arg=value#anchor",
@@ -2776,8 +2831,8 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrl) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto part = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr part = BinaryColumn::create();
 
     std::string strs[] = {"http://username:password@hostname/path?arg=value#anchor"};
 
@@ -2819,7 +2874,7 @@ PARALLEL_TEST(VecStringFunctionsTest, parseUrl) {
 PARALLEL_TEST(VecStringFunctionsTest, hex_intTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto ints = Int64Column::create();
+    Int64Column::Ptr ints = Int64Column::create();
 
     int64_t values[] = {21, 16, 256, 514};
     std::string strs[] = {"15", "10", "100", "202"};
@@ -2841,7 +2896,7 @@ PARALLEL_TEST(VecStringFunctionsTest, hex_intTest) {
 PARALLEL_TEST(VecStringFunctionsTest, hex_stringTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto ints = BinaryColumn::create();
+    BinaryColumn::Ptr ints = BinaryColumn::create();
 
     std::string values[] = {"21", "16", "256", "514"};
     std::string strs[] = {"3231", "3136", "323536", "353134"};
@@ -2864,7 +2919,7 @@ PARALLEL_TEST(VecStringFunctionsTest, unhexTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
 
     Columns columns;
-    auto ints = BinaryColumn::create();
+    BinaryColumn::Ptr ints = BinaryColumn::create();
 
     std::string strs[] = {"21", "16", "256", "514"};
     std::string values[] = {"3231", "3136", "323536", "353134"};
@@ -2888,8 +2943,8 @@ static void test_left_and_right_not_const(
     // left_not_const and right_not_const
     std::unique_ptr<FunctionContext> context(FunctionContext::create_test_context());
     Columns columns;
-    auto str_col = BinaryColumn::create();
-    auto len_col = Int32Column::create();
+    BinaryColumn::Ptr str_col = BinaryColumn::create();
+    Int32Column::Ptr len_col = Int32Column::create();
     for (auto& c : cases) {
         auto s = std::get<0>(c);
         auto len = std::get<1>(c);
@@ -3015,7 +3070,7 @@ static void test_left_and_right_const(
     for (auto& c : cases) {
         auto [len, left_expect, right_expect] = c;
         Columns columns;
-        auto len_col = Int32Column::create();
+        Int32Column::Ptr len_col = Int32Column::create();
         len_col->append(len);
         columns.push_back(str_col);
         columns.push_back(ConstColumn::create(len_col, 1));
@@ -3042,7 +3097,7 @@ static void test_left_and_right_const(
 }
 
 PARALLEL_TEST(VecStringFunctionsTest, leftAndRightConstASCIITest) {
-    auto str_col = BinaryColumn::create();
+    BinaryColumn::Ptr str_col = BinaryColumn::create();
     str_col->append("");
     str_col->append("a");
     str_col->append("ABCDEFG_HIJKLMN");
@@ -3063,7 +3118,7 @@ PARALLEL_TEST(VecStringFunctionsTest, leftAndRightConstASCIITest) {
 }
 
 PARALLEL_TEST(VecStringFunctionsTest, leftAndRightConstUtf8Test) {
-    auto str_col = BinaryColumn::create();
+    BinaryColumn::Ptr str_col = BinaryColumn::create();
     str_col->append("");
     str_col->append("a");
     str_col->append("三十年众生牛马，六十年诸佛龙象");
@@ -3101,9 +3156,9 @@ static void test_substr_not_const(std::vector<std::tuple<std::string, int, int, 
     std::mt19937 gen(rd());
     std::shuffle(cases.begin(), cases.end(), gen);
     std::unique_ptr<FunctionContext> context(FunctionContext::create_test_context());
-    auto str_col = BinaryColumn::create();
-    auto off_col = Int32Column::create();
-    auto len_col = Int32Column::create();
+    BinaryColumn::Ptr str_col = BinaryColumn::create();
+    Int32Column::Ptr off_col = Int32Column::create();
+    Int32Column::Ptr len_col = Int32Column::create();
     for (auto& c : cases) {
         str_col->append(Slice(std::get<0>(c)));
         off_col->append(std::get<1>(c));
@@ -3275,8 +3330,8 @@ PARALLEL_TEST(VecStringFunctionsTest, substrNotConstUtf8Test) {
 PARALLEL_TEST(VecStringFunctionsTest, strcmpTest) {
     std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
     Columns columns;
-    auto lhs = BinaryColumn::create();
-    auto rhs = BinaryColumn::create();
+    BinaryColumn::Ptr lhs = BinaryColumn::create();
+    BinaryColumn::Ptr rhs = BinaryColumn::create();
 
     lhs->append("");
     rhs->append("");
@@ -3317,9 +3372,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrCryE", "hitCdeciCsionCdlist", "hitCdecCisiCondlCist", "12342356"};
     std::string res[] = {"['b']", "['b']", "['hit','sion']", "['hit','isi']", "[]"};
@@ -3357,9 +3412,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllNullablePattern1) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrryE", "hitdeciCsiondlist", "hitdecCisiondlist"};
     int indexs[] = {1, 2, 1, 2};
@@ -3396,10 +3451,10 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllNullablePattern2) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = BinaryColumn::create();
-    auto null = NullColumn::create();
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    BinaryColumn::Ptr pattern = BinaryColumn::create();
+    NullColumn::Ptr null = NullColumn::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrryE", "hitdeciCsiondlist", "hitdecCisioedlise"};
     int indexs[] = {1, 2, 1, 2};
@@ -3439,9 +3494,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllOnlyNullPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
-    auto pattern = ColumnHelper::create_const_null_column(1);
-    auto index = Int64Column::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    ColumnPtr pattern = ColumnHelper::create_const_null_column(1);
+    Int64Column::Ptr index = Int64Column::create();
 
     int length = 4;
 
@@ -3475,9 +3530,9 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllConstPattern) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("([[:lower:]]+)C([[:lower:]]+)", 1);
-    auto index = Int64Column::create();
+    Int64Column::Ptr index = Int64Column::create();
 
     std::string strs[] = {"AbCdE", "AbCdrrryE", "hitdeciCsiondlist", "hitdecCisiondlist"};
     int indexs[] = {1, 2, 1, 2};
@@ -3515,7 +3570,7 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllConst) {
 
     Columns columns;
 
-    auto str = BinaryColumn::create();
+    BinaryColumn::Ptr str = BinaryColumn::create();
     auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("([[:lower:]]+)C([[:lower:]]+)", 5);
     auto index = ColumnHelper::create_const_column<TYPE_BIGINT>(2, 5);
 
@@ -3543,6 +3598,344 @@ PARALLEL_TEST(VecStringFunctionsTest, regexpExtractAllConst) {
 
     for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
         ASSERT_EQ(res[i], result->debug_item(i));
+    }
+}
+
+PARALLEL_TEST(VecStringFunctionsTest, crc32Test) {
+    std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+    Columns columns;
+    BinaryColumn::Ptr str = BinaryColumn::create();
+    str->append("starrocks");
+    str->append("STARROCKS");
+    columns.push_back(str);
+
+    ASSERT_TRUE(StringFunctions::crc32(ctx.get(), columns).ok());
+    ColumnPtr result = StringFunctions::crc32(ctx.get(), columns).value();
+    auto v = ColumnHelper::cast_to<TYPE_BIGINT>(result);
+    ASSERT_EQ(static_cast<uint32_t>(2312449062), v->get_data()[0]);
+    ASSERT_EQ(static_cast<uint32_t>(3440849609), v->get_data()[1]);
+}
+
+PARALLEL_TEST(VecStringFunctionsTest, regexpSplitTest) {
+    // const pattern, const max_split - default_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("[ABC]", 1);
+
+        std::string strs[] = {"oneAtwoBthreeC", "1A2B3C", "AABBCC"};
+        std::string res[] = {"['one','two','three','']", "['1','2','3','']", "['','','','','','','']"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+        }
+
+        columns.push_back(str);
+        columns.push_back(pattern);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // const pattern, const max_split - customized_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        NullColumn::Ptr null = NullColumn::create();
+        auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("[ABC]", 1);
+        auto max_split = ColumnHelper::create_const_column<TYPE_INT>(2, 1);
+
+        std::string strs[] = {"oneAtwoBthreeC", "1A2B3C", "AABBCC", "AABBCC"};
+        std::string res[] = {"['one','twoBthreeC']", "['1','2B3C']", "['','ABBCC']", "NULL"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            null->append(i == 3 ? 1 : 0);
+        }
+
+        columns.push_back(NullableColumn::create(str, null));
+        columns.push_back(pattern);
+        columns.push_back(max_split);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // const pattern - default_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("[ABC]", 1);
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC",
+                              "oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+
+        std::string res[] = {"['one','two','three','']", "['one','two','three','']", "['one','two','three','']",
+                             "['one','two','three','']", "['one','two','three','']", "['one','two','three','']"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+        }
+
+        columns.push_back(str);
+        columns.push_back(pattern);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // const pattern - customized_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        NullColumn::Ptr null = NullColumn::create();
+        auto pattern = ColumnHelper::create_const_column<TYPE_VARCHAR>("[ABC]", 1);
+        Int32Column::Ptr max_split = Int32Column::create();
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC",
+                              "oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+        int max_splits[] = {-1, 0, 1, 2, 3, 4, 5};
+
+        std::string res[] = {"['one','two','three','']",
+                             "['one','two','three','']",
+                             "['oneAtwoBthreeC']",
+                             "['one','twoBthreeC']",
+                             "['one','two','threeC']",
+                             "['one','two','three','']",
+                             "NULL"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            null->append(i == 6 ? 1 : 0);
+            max_split->append(max_splits[i]);
+        }
+
+        columns.push_back(NullableColumn::create(str, null));
+        columns.push_back(pattern);
+        columns.push_back(max_split);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // const max_split - default_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        BinaryColumn::Ptr pattern = BinaryColumn::create();
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+        std::string patterns[] = {"[nwe]", "[ne]", "[123]"};
+        std::string res[] = {"['o','','At','oBthr','','C']", "['o','','AtwoBthr','','C']", "['oneAtwoBthreeC']"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            pattern->append(patterns[i]);
+        }
+
+        columns.push_back(str);
+        columns.push_back(pattern);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // const max_split - customized_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        BinaryColumn::Ptr pattern = BinaryColumn::create();
+        NullColumn::Ptr null = NullColumn::create();
+        auto max_split = ColumnHelper::create_const_column<TYPE_INT>(4, 1);
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+        std::string patterns[] = {"[nwe]", "[ne]", "[123]", "[123]"};
+        std::string res[] = {"['o','','At','oBthreeC']", "['o','','AtwoBthr','eC']", "['oneAtwoBthreeC']", "NULL"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            pattern->append(patterns[i]);
+            null->append(i == 3 ? 1 : 0);
+        }
+
+        columns.push_back(str);
+        columns.push_back(NullableColumn::create(pattern, null));
+        columns.push_back(max_split);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // none const - default_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        BinaryColumn::Ptr pattern = BinaryColumn::create();
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+        std::string patterns[] = {"[nwe]", "[ne]", "[123]"};
+
+        std::string res[] = {"['o','','At','oBthr','','C']", "['o','','AtwoBthr','','C']", "['oneAtwoBthreeC']"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            pattern->append(patterns[i]);
+        }
+
+        columns.push_back(str);
+        columns.push_back(pattern);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
+    }
+
+    // none const - customized_max_split
+    {
+        std::unique_ptr<FunctionContext> ctx(FunctionContext::create_test_context());
+        auto context = ctx.get();
+
+        Columns columns;
+
+        BinaryColumn::Ptr str = BinaryColumn::create();
+        BinaryColumn::Ptr pattern = BinaryColumn::create();
+        NullColumn::Ptr null = NullColumn::create();
+        Int32Column::Ptr max_split = Int32Column::create();
+
+        std::string strs[] = {"oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC", "oneAtwoBthreeC"};
+        std::string patterns[] = {"[nwe]", "[ne]", "[123]", "[123]"};
+        int max_splits[] = {1, 2, 3, 4};
+
+        std::string res[] = {"['oneAtwoBthreeC']", "['o','eAtwoBthreeC']", "['oneAtwoBthreeC']", "NULL"};
+
+        for (int i = 0; i < sizeof(strs) / sizeof(strs[0]); ++i) {
+            str->append(strs[i]);
+            pattern->append(patterns[i]);
+            null->append(i == 3 ? 1 : 0);
+            max_split->append(max_splits[i]);
+        }
+
+        columns.push_back(str);
+        columns.push_back(NullableColumn::create(pattern, null));
+        columns.push_back(max_split);
+
+        context->set_constant_columns(columns);
+
+        ASSERT_TRUE(StringFunctions::regexp_extract_prepare(context, FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+        auto result = StringFunctions::regexp_split(context, columns).value();
+
+        ASSERT_TRUE(StringFunctions::regexp_close(context,
+                                                  FunctionContext::FunctionContext::FunctionStateScope::THREAD_LOCAL)
+                            .ok());
+
+        for (int i = 0; i < sizeof(res) / sizeof(res[0]); ++i) {
+            ASSERT_EQ(res[i], result->debug_item(i));
+        }
     }
 }
 

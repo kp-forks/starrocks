@@ -14,6 +14,7 @@
 
 package com.starrocks.sql.optimizer.operator;
 
+import com.google.api.client.util.Sets;
 import com.google.common.collect.Lists;
 import com.starrocks.sql.optimizer.OptExpression;
 import com.starrocks.sql.optimizer.OptExpressionVisitor;
@@ -22,10 +23,15 @@ import com.starrocks.sql.optimizer.operator.logical.LogicalJoinOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalScanOperator;
 import com.starrocks.sql.optimizer.operator.physical.PhysicalJoinOperator;
 import com.starrocks.sql.optimizer.operator.physical.PhysicalScanOperator;
+import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
+import com.starrocks.sql.optimizer.property.DomainProperty;
 
+import java.util.BitSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public abstract class Operator {
     public static final long DEFAULT_LIMIT = -1;
@@ -34,6 +40,8 @@ public abstract class Operator {
     protected final OperatorType opType;
     protected long limit = DEFAULT_LIMIT;
     protected ScalarOperator predicate = null;
+    // common sub operators in predicate
+    protected Map<ColumnRefOperator, ScalarOperator> predicateCommonOperators = null;
 
     private static long saltGenerator = 0;
     /**
@@ -52,6 +60,20 @@ public abstract class Operator {
     // if no salt, two different Groups will be merged into one, that leads to mutual reference
     // or self reference of groups
     protected long salt = 0;
+
+    // mark which rule(bit) has been applied to the operator.
+    protected BitSet opRuleBits = new BitSet();
+    // mark which mv has been applied to the operator
+    protected Set<Long> opAppliedMVs = Sets.newHashSet();
+
+    // an operator logically equivalent to 'this' operator
+    // used by view based mv rewrite
+    // eg: LogicalViewScanOperator is logically equivalent to the operator build from the view
+    protected Operator equivalentOp;
+
+    protected DomainProperty domainProperty;
+
+    protected int planNodeId = -1;
 
     public Operator(OperatorType opType) {
         this.opType = opType;
@@ -103,6 +125,14 @@ public abstract class Operator {
         this.predicate = predicate;
     }
 
+    public Map<ColumnRefOperator, ScalarOperator> getPredicateCommonOperators() {
+        return predicateCommonOperators;
+    }
+
+    public void setPredicateCommonOperators(Map<ColumnRefOperator, ScalarOperator> predicateCommonOperators) {
+        this.predicateCommonOperators = predicateCommonOperators;
+    }
+
     public Projection getProjection() {
         return projection;
     }
@@ -133,6 +163,34 @@ public abstract class Operator {
         return salt;
     }
 
+    public void setOpRuleBit(int bit) {
+        this.opRuleBits.set(bit);
+    }
+
+    public void resetOpRuleBit(int bit) {
+        this.opRuleBits.clear(bit);
+    }
+
+    public boolean isOpRuleBitSet(int bit) {
+        return opRuleBits.get(bit);
+    }
+
+    public void setOpAppliedMV(long mvId) {
+        this.opAppliedMVs.add(mvId);
+    }
+
+    public boolean isOpAppliedMV(long mvId) {
+        return opAppliedMVs.contains(mvId);
+    }
+
+    public Operator getEquivalentOp() {
+        return equivalentOp;
+    }
+
+    public void setEquivalentOp(Operator equivalentOp) {
+        this.equivalentOp = equivalentOp;
+    }
+
     public RowOutputInfo getRowOutputInfo(List<OptExpression> inputs) {
         if (rowOutputInfo == null) {
             rowOutputInfo = deriveRowOutputInfo(inputs);
@@ -146,8 +204,36 @@ public abstract class Operator {
         return rowOutputInfo;
     }
 
+    public void clearRowOutputInfo() {
+        rowOutputInfo = null;
+    }
+
+    public DomainProperty getDomainProperty(List<OptExpression> inputs) {
+        if (domainProperty == null) {
+            domainProperty = deriveDomainProperty(inputs);
+        }
+
+        if (projection != null) {
+            domainProperty = domainProperty.projectDomainProperty(projection.getColumnRefMap());
+        }
+
+        return domainProperty;
+    }
+
+    public int getPlanNodeId() {
+        return planNodeId;
+    }
+
+    public void setPlanNodeId(int planNodeId) {
+        this.planNodeId = planNodeId;
+    }
+
     protected RowOutputInfo deriveRowOutputInfo(List<OptExpression> inputs) {
         throw new UnsupportedOperationException();
+    }
+
+    protected DomainProperty deriveDomainProperty(List<OptExpression> inputs) {
+        return new DomainProperty(Map.of());
     }
 
     protected RowOutputInfo projectInputRow(RowOutputInfo inputRow) {
@@ -201,6 +287,9 @@ public abstract class Operator {
             builder.predicate = operator.predicate;
             builder.projection = operator.projection;
             builder.salt = operator.salt;
+            builder.equivalentOp = operator.equivalentOp;
+            builder.opRuleBits.or(operator.opRuleBits);
+            builder.opAppliedMVs.addAll(operator.opAppliedMVs);
             return (B) this;
         }
 
@@ -243,6 +332,11 @@ public abstract class Operator {
 
         public B addSalt() {
             builder.salt = ++saltGenerator;
+            return (B) this;
+        }
+
+        public B setOpBitSet(BitSet opRuleMask) {
+            builder.opRuleBits = opRuleMask;
             return (B) this;
         }
     }

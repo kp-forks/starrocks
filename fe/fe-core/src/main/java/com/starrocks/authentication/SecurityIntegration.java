@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package com.starrocks.authentication;
 
 import com.google.gson.annotations.SerializedName;
+import com.starrocks.sql.analyzer.SemanticException;
 
 import java.util.Map;
 
@@ -24,7 +24,6 @@ import java.util.Map;
  * Authentication for this integration is provided by corresponding `getAuthenticationProvider()`.
  */
 public abstract class SecurityIntegration {
-    public static final String SECURITY_INTEGRATION_TYPE_LDAP = "ldap";
     public static final String SECURITY_INTEGRATION_PROPERTY_TYPE_KEY = "type";
     @SerializedName(value = "n")
     protected String name;
@@ -43,6 +42,10 @@ public abstract class SecurityIntegration {
         return propertyMap;
     }
 
+    public String getName() {
+        return name;
+    }
+
     public String getComment() {
         return propertyMap.getOrDefault("comment", "");
     }
@@ -56,4 +59,6 @@ public abstract class SecurityIntegration {
     public Map<String, String> getPropertyMapWithMasking() {
         return propertyMap;
     }
+
+    public abstract void checkProperty() throws SemanticException;
 }
