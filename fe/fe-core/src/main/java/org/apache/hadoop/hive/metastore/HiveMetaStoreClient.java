@@ -35,6 +35,7 @@
 package org.apache.hadoop.hive.metastore;
 
 import com.google.common.collect.Lists;
+import com.starrocks.connector.hadoop.HadoopExt;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.common.ValidTxnList;
 import org.apache.hadoop.hive.common.ValidWriteIdList;
@@ -156,12 +157,11 @@ import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.protocol.TCompactProtocol;
 import org.apache.thrift.protocol.TProtocol;
-import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
+import org.apache.thrift.transport.layered.TFramedTransport;
 
-import javax.security.auth.login.LoginException;
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -181,6 +181,7 @@ import java.util.Map.Entry;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.security.auth.login.LoginException;
 
 import static org.apache.hadoop.hive.metastore.utils.MetaStoreUtils.getDefaultCatalog;
 
@@ -241,6 +242,8 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
         } else {
             this.conf = new Configuration(conf);
         }
+
+        HadoopExt.getInstance().rewriteConfiguration(this.conf);
 
         version = MetastoreConf.getBoolVar(conf, ConfVars.HIVE_IN_TEST) ? TEST_VERSION : VERSION;
 
@@ -359,7 +362,7 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
                         JavaUtils.getClassLoader());
                 return (URIResolverHook) ReflectionUtils.newInstance(uriResolverClass, null);
             } catch (Exception e) {
-                LOG.error("Exception loading uri resolver hook" + e);
+                LOG.error("Exception loading uri resolver hook", e);
                 return null;
             }
         }
@@ -436,6 +439,14 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
     }
 
     private void open() throws MetaException {
+        UserGroupInformation ugi = HadoopExt.getInstance().getHMSUGI(conf);
+        HadoopExt.getInstance().doAs(ugi, () -> {
+            openInternal();
+            return null;
+        });
+    }
+
+    private void openInternal() throws MetaException {
         isConnected = false;
         TTransportException tte = null;
         boolean useSSL = MetastoreConf.getBoolVar(conf, ConfVars.USE_SSL);
@@ -508,6 +519,7 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
                                         transport, MetaStoreUtils.getMetaStoreSaslProperties(conf, useSSL));
                             }
                         } catch (IOException ioe) {
+                            tte = new TTransportException(ioe);
                             LOG.error("Couldn't create client transport", ioe);
                             throw new MetaException(ioe.toString());
                         }
@@ -544,7 +556,10 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
                     if (isConnected && !useSasl && MetastoreConf.getBoolVar(conf, ConfVars.EXECUTE_SET_UGI)) {
                         // Call set_ugi, only in unsecure mode.
                         try {
-                            UserGroupInformation ugi = SecurityUtils.getUGI();
+                            UserGroupInformation ugi = HadoopExt.getInstance().getHMSUGI(conf);
+                            if (ugi == null) {
+                                ugi = SecurityUtils.getUGI();
+                            }
                             client.set_ugi(ugi.getUserName(), Arrays.asList(ugi.getGroupNames()));
                         } catch (LoginException e) {
                             LOG.warn("Failed to do login. set_ugi() is not successful, " +
@@ -557,7 +572,10 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
                                     + "Continuing without it.", e);
                         }
                     }
-                } catch (MetaException e) {
+                } catch (MetaException | TTransportException e) {
+                    if (e instanceof TTransportException) {
+                        tte = (TTransportException) e;
+                    }
                     LOG.error("Unable to connect to metastore with URI " + store
                             + " in attempt " + attempt, e);
                 }
@@ -1031,14 +1049,22 @@ public class HiveMetaStoreClient implements IMetaStoreClient, AutoCloseable {
 
     @Override
     public boolean tableExists(String databaseName, String tableName)
-            throws MetaException, TException, UnknownDBException {
-        throw new TException("method not implemented");
+        throws MetaException, TException, UnknownDBException {
+        try {
+            Table table = getTable(databaseName, tableName);
+            return table != null;
+        } catch (UnknownDBException | NoSuchObjectException e) {
+            return false;
+        } catch (TException e) {
+            LOG.warn("Failed to check table {}.{} existence", databaseName, tableName, e);
+            throw e;
+        }
     }
 
     @Override
     public boolean tableExists(String catName, String dbName, String tableName)
-            throws MetaException, TException, UnknownDBException {
-        throw new TException("method not implemented");
+        throws MetaException, TException, UnknownDBException {
+        return tableExists(dbName, tableName);
     }
 
     @Override

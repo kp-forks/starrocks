@@ -120,8 +120,8 @@ public:
 
     void clear_cached_delta_column_group(const std::vector<TabletSegmentId>& tsids);
 
-    StatusOr<size_t> clear_delta_column_group_before_version(KVStore* meta, int64_t tablet_id,
-                                                             int64_t min_readable_version);
+    StatusOr<size_t> clear_delta_column_group_before_version(KVStore* meta, const std::string& tablet_path,
+                                                             int64_t tablet_id, int64_t min_readable_version);
 
     void expire_cache();
 
@@ -148,6 +148,9 @@ public:
     // Used in UT only
     bool TEST_update_state_exist(Tablet* tablet, Rowset* rowset);
     bool TEST_primary_index_refcnt(int64_t tablet_id, uint32_t expected_cnt);
+
+private:
+    void* _schedule_apply_thread_callback(void* arg);
 
 private:
     // default 6min

@@ -14,22 +14,37 @@
 
 #pragma once
 
+#include <stddef.h>
+
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "column/column.h"
+#include "column/vectorized_fwd.h"
 #include "common/status.h"
+#include "exec/hdfs_scanner.h"
+#include "formats/parquet/column_reader.h"
 #include "formats/parquet/encoding.h"
 #include "formats/parquet/level_codec.h"
 #include "formats/parquet/page_reader.h"
+#include "formats/parquet/types.h"
+#include "formats/parquet/utils.h"
 #include "fs/fs.h"
 #include "gen_cpp/parquet_types.h"
 #include "util/compression/block_compression.h"
+#include "util/runtime_profile.h"
+#include "util/slice.h"
+#include "util/stopwatch.hpp"
 
 namespace starrocks {
 class BlockCompressionCodec;
+class NullableColumn;
+
+namespace io {
+class SeekableInputStream;
+} // namespace io
 } // namespace starrocks
 
 namespace starrocks::parquet {
@@ -50,7 +65,12 @@ public:
 
     Status skip_page();
 
-    Status skip_values(size_t num) { return _cur_decoder->skip(num); }
+    Status skip_values(size_t num) {
+        if (num == 0) {
+            return Status::OK();
+        }
+        return _cur_decoder->skip(num);
+    }
 
     Status next_page();
 
@@ -60,26 +80,17 @@ public:
 
     uint32_t num_values() const { return _num_values; }
 
-    // Try to decode n definition levels into 'levels'
-    // return number of decoded levels.
-    // If the returned value is less than input n, this means current page don't have
-    // enough levels.
-    // User should call next_page() to get more levels
-    size_t decode_def_levels(size_t n, level_t* levels) {
-        DCHECK_GT(_max_def_level, 0);
-        return _def_level_decoder.decode_batch(n, levels);
-    }
-
     LevelDecoder& def_level_decoder() { return _def_level_decoder; }
     LevelDecoder& rep_level_decoder() { return _rep_level_decoder; }
 
-    size_t decode_rep_levels(size_t n, level_t* levels) {
-        DCHECK_GT(_max_rep_level, 0);
-        return _rep_level_decoder.decode_batch(n, levels);
-    }
-
-    Status decode_values(size_t n, const uint8_t* is_nulls, ColumnContentType content_type, Column* dst) {
+    Status decode_values(size_t n, const uint16_t* is_nulls, ColumnContentType content_type, Column* dst,
+                         const FilterData* filter = nullptr) {
+        SCOPED_RAW_TIMER(&_opts.stats->value_decode_ns);
+        if (_current_row_group_no_null || _current_page_no_null) {
+            return _cur_decoder->next_batch(n, content_type, dst, filter);
+        }
         size_t idx = 0;
+        size_t off = 0;
         while (idx < n) {
             bool is_null = is_nulls[idx++];
             size_t run = 1;
@@ -90,14 +101,17 @@ public:
             if (is_null) {
                 dst->append_nulls(run);
             } else {
-                RETURN_IF_ERROR(_cur_decoder->next_batch(run, content_type, dst));
+                const FilterData* forward_filter = filter ? filter + off : filter;
+                RETURN_IF_ERROR(_cur_decoder->next_batch(run, content_type, dst, forward_filter));
             }
+            off += run;
         }
         return Status::OK();
     }
 
-    Status decode_values(size_t n, ColumnContentType content_type, Column* dst) {
-        return _cur_decoder->next_batch(n, content_type, dst);
+    Status decode_values(size_t n, ColumnContentType content_type, Column* dst, const FilterData* filter = nullptr) {
+        SCOPED_RAW_TIMER(&_opts.stats->value_decode_ns);
+        return _cur_decoder->next_batch(n, content_type, dst, filter);
     }
 
     const tparquet::ColumnMetaData& metadata() const { return _chunk_metadata->meta_data; }
@@ -107,19 +121,32 @@ public:
         return _cur_decoder->get_dict_values(column);
     }
 
-    Status get_dict_values(const std::vector<int32_t>& dict_codes, const NullableColumn& nulls, Column* column) {
+    Status get_dict_values(const Buffer<int32_t>& dict_codes, const NullableColumn& nulls, Column* column) {
         RETURN_IF_ERROR(_try_load_dictionary());
         return _cur_decoder->get_dict_values(dict_codes, nulls, column);
     }
+
+    Status seek_to_offset(const uint64_t off) {
+        RETURN_IF_ERROR(_page_reader->seek_to_offset(off));
+        _page_parse_state = INITIALIZED;
+        return Status::OK();
+    }
+
+    void set_page_num(size_t page_num) { _page_reader->set_page_num(page_num); }
+
+    void set_next_read_page_idx(size_t cur_page_idx) { _page_reader->set_next_read_page_idx(cur_page_idx); }
+
+    Status load_dictionary_page();
 
 private:
     Status _parse_page_header();
     Status _parse_page_data();
 
-    Status _try_load_dictionary();
     Status _read_and_decompress_page_data();
     Status _parse_data_page();
     Status _parse_dict_page();
+
+    Status _try_load_dictionary();
 
     Status _read_and_decompress_page_data(uint32_t compressed_size, uint32_t uncompressed_size, bool is_compressed);
 
@@ -133,6 +160,8 @@ private:
 
     level_t _max_def_level = 0;
     level_t _max_rep_level = 0;
+    bool _current_row_group_no_null = false;
+    bool _current_page_no_null = false;
     int32_t _type_length = 0;
     const tparquet::ColumnChunk* _chunk_metadata = nullptr;
     const ColumnReaderOptions& _opts;

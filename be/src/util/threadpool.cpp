@@ -42,6 +42,7 @@
 #include "gutil/map_util.h"
 #include "gutil/strings/substitute.h"
 #include "gutil/sysinfo.h"
+#include "testutil/sync_point.h"
 #include "util/cpu_info.h"
 #include "util/scoped_cleanup.h"
 #include "util/thread.h"
@@ -87,6 +88,16 @@ ThreadPoolBuilder& ThreadPoolBuilder::set_max_queue_size(int max_queue_size) {
 
 ThreadPoolBuilder& ThreadPoolBuilder::set_idle_timeout(const MonoDelta& idle_timeout) {
     _idle_timeout = idle_timeout;
+    return *this;
+}
+
+ThreadPoolBuilder& ThreadPoolBuilder::set_cpuids(const CpuUtil::CpuIds& cpuids) {
+    _cpuids = cpuids;
+    return *this;
+}
+
+ThreadPoolBuilder& ThreadPoolBuilder::set_borrowed_cpuids(const std::vector<CpuUtil::CpuIds>& borrowed_cpuids) {
+    _borrowed_cpuids = borrowed_cpuids;
     return *this;
 }
 
@@ -249,14 +260,15 @@ ThreadPool::ThreadPool(const ThreadPoolBuilder& builder)
           _num_threads_pending_start(0),
           _active_threads(0),
           _total_queued_tasks(0),
-          _tokenless(new_token(ExecutionMode::CONCURRENT)) {}
+          _tokenless(new_token(ExecutionMode::CONCURRENT)),
+          _cpuids(builder._cpuids),
+          _borrowed_cpuids(builder._borrowed_cpuids) {}
 
 ThreadPool::~ThreadPool() noexcept {
     // There should only be one live token: the one used in tokenless submission.
     CHECK_EQ(1, _tokens.size()) << strings::Substitute("Threadpool $0 destroyed with $1 allocated tokens", _name,
                                                        _tokens.size());
     shutdown();
-    _pool_status.permit_unchecked_error();
 }
 
 Status ThreadPool::init() {
@@ -273,6 +285,11 @@ Status ThreadPool::init() {
         }
     }
     return Status::OK();
+}
+
+bool ThreadPool::is_pool_status_ok() {
+    std::unique_lock l(_lock);
+    return _pool_status.ok();
 }
 
 void ThreadPool::shutdown() {
@@ -366,7 +383,7 @@ Status ThreadPool::do_submit(std::shared_ptr<Runnable> r, ThreadPoolToken* token
 
     // Size limit check.
     int64_t capacity_remaining = 0;
-    const int cur_max_threads = _max_threads.load();
+    const int cur_max_threads = _max_threads.load(std::memory_order_acquire);
     if (cur_max_threads >= _active_threads) {
         capacity_remaining = static_cast<int64_t>(cur_max_threads) - _active_threads +
                              static_cast<int64_t>(_max_queue_size) - _total_queued_tasks;
@@ -374,11 +391,12 @@ Status ThreadPool::do_submit(std::shared_ptr<Runnable> r, ThreadPoolToken* token
         // dynamic decrease _max_threads
         capacity_remaining = static_cast<int64_t>(_max_queue_size) - _total_queued_tasks;
     }
-
+    TEST_SYNC_POINT_CALLBACK("ThreadPool::do_submit:1", &capacity_remaining);
     if (capacity_remaining < 1) {
         return Status::ServiceUnavailable(strings::Substitute(
                 "Thread pool is at capacity ($0/$1 tasks running, $2/$3 tasks queued)",
-                _num_threads + _num_threads_pending_start, _max_threads.load(), _total_queued_tasks, _max_queue_size));
+                _num_threads + _num_threads_pending_start, _max_threads.load(std::memory_order_acquire),
+                _total_queued_tasks, _max_queue_size));
     }
 
     // Should we create another thread?
@@ -401,7 +419,8 @@ Status ThreadPool::do_submit(std::shared_ptr<Runnable> r, ThreadPoolToken* token
     int inactive_threads = _num_threads + _num_threads_pending_start - _active_threads;
     int additional_threads = static_cast<int>(_queue.size()) + threads_from_this_submit - inactive_threads;
     bool need_a_thread = false;
-    if (additional_threads > 0 && _num_threads + _num_threads_pending_start < _max_threads.load()) {
+    if (additional_threads > 0 &&
+        _num_threads + _num_threads_pending_start < _max_threads.load(std::memory_order_acquire)) {
         need_a_thread = true;
         _num_threads_pending_start++;
     }
@@ -474,10 +493,69 @@ Status ThreadPool::update_max_threads(int max_threads) {
         LOG(WARNING) << err_msg;
         return Status::InvalidArgument(err_msg);
     } else {
-        _max_threads.store(max_threads);
-        LOG(INFO) << "ThreadPool " << _name << " update max threads : " << _max_threads.load();
+        _max_threads.store(max_threads, std::memory_order_release);
+        LOG(INFO) << "ThreadPool " << _name << " update max threads : " << _max_threads.load(std::memory_order_acquire);
     }
     return Status::OK();
+}
+
+Status ThreadPool::update_min_threads(int min_threads) {
+    if (min_threads > this->_max_threads) {
+        std::string err_msg = strings::Substitute("invalid min threads num $0 :  max threads num: $1",
+                                                  std::to_string(min_threads), std::to_string(this->_max_threads));
+        LOG(WARNING) << err_msg;
+        return Status::InvalidArgument(err_msg);
+    } else {
+        _min_threads.store(min_threads, std::memory_order_release);
+        LOG(INFO) << "ThreadPool " << _name << " update min threads : " << _min_threads.load(std::memory_order_acquire);
+    }
+    return Status::OK();
+}
+
+static void _bind_cpus_inlock(Thread* thread, const size_t thread_index, const CpuUtil::CpuIds& cpuids,
+                              const std::vector<CpuUtil::CpuIds>& borrowed_cpuids) {
+    if (borrowed_cpuids.empty() || thread_index < cpuids.size()) {
+        CpuUtil::bind_cpus(thread, cpuids);
+        return;
+    }
+
+    // Assign the thread to all cpuids (including cpuids and borrowed_cpuids) in a round-robin manner
+    // based on thread_index.
+
+    size_t num_total_cpuids = cpuids.size();
+    for (const auto& cur_borrowed_cpuids : borrowed_cpuids) {
+        num_total_cpuids += cur_borrowed_cpuids.size();
+    }
+
+    if (num_total_cpuids == 0) {
+        CpuUtil::bind_cpus(thread, cpuids);
+        return;
+    }
+
+    const size_t normalized_thread_index = thread_index % num_total_cpuids;
+    if (normalized_thread_index < cpuids.size()) {
+        CpuUtil::bind_cpus(thread, cpuids);
+        return;
+    }
+    size_t num_threads = cpuids.size();
+    for (const auto& cur_borrowed_cpuids : borrowed_cpuids) {
+        num_threads += cur_borrowed_cpuids.size();
+        if (normalized_thread_index < num_threads) {
+            CpuUtil::bind_cpus(thread, cur_borrowed_cpuids);
+            return;
+        }
+    }
+}
+
+void ThreadPool::bind_cpus(const CpuUtil::CpuIds& cpuids, const std::vector<CpuUtil::CpuIds>& borrowed_cpuids) {
+    std::lock_guard<std::mutex> lock(_lock);
+    _cpuids = cpuids;
+    _borrowed_cpuids = borrowed_cpuids;
+
+    int i = 0;
+    for (auto* thread : _threads) {
+        _bind_cpus_inlock(thread, i++, cpuids, borrowed_cpuids);
+    }
 }
 
 void ThreadPool::dispatch_thread() {
@@ -493,6 +571,8 @@ void ThreadPool::dispatch_thread() {
 
     // Owned by this worker thread and added/removed from _idle_threads as needed.
     IdleThread me;
+
+    _bind_cpus_inlock(current_thread, _num_threads - 1, _cpuids, _borrowed_cpuids);
 
     while (true) {
         // Note: Status::Aborted() is used to indicate normal shutdown.
@@ -550,6 +630,7 @@ void ThreadPool::dispatch_thread() {
 
         l.unlock();
 
+        MonoTime start_time = MonoTime::Now();
         // Execute the task
         task.runnable->run();
         current_thread->inc_finished_tasks();
@@ -561,6 +642,12 @@ void ThreadPool::dispatch_thread() {
         // In the worst case, the destructor might even try to do something
         // with this threadpool, and produce a deadlock.
         task.runnable.reset();
+        MonoTime finish_time = MonoTime::Now();
+
+        _total_executed_tasks.increment(1);
+        _total_pending_time_ns.increment(start_time.GetDeltaSince(task.submit_time).ToNanoseconds());
+        _total_execute_time_ns.increment(finish_time.GetDeltaSince(start_time).ToNanoseconds());
+
         l.lock();
         _last_active_timestamp = MonoTime::Now();
 
@@ -615,6 +702,22 @@ void ThreadPool::check_not_pool_thread_unlocked() {
                 "name '$1' called pool function that would result in deadlock",
                 _name, current->name());
     }
+}
+
+Status ConcurrencyLimitedThreadPoolToken::submit(std::shared_ptr<Runnable> task,
+                                                 std::chrono::system_clock::time_point deadline) {
+    if (!_sem->try_acquire_until(deadline)) {
+        auto t = MilliSecondsSinceEpochFromTimePoint(deadline);
+        return Status::TimedOut(fmt::format("acquire semaphore reached deadline={}", t));
+    }
+    auto token_task =
+            std::make_shared<AutoCleanRunnable>([t = std::move(task)] { t->run(); }, [sem = _sem] { sem->release(); });
+    return _pool->submit(std::move(token_task));
+}
+
+Status ConcurrencyLimitedThreadPoolToken::submit_func(std::function<void()> f,
+                                                      std::chrono::system_clock::time_point deadline) {
+    return submit(std::make_shared<FunctionRunnable>(std::move(f)), deadline);
 }
 
 std::ostream& operator<<(std::ostream& o, ThreadPoolToken::State s) {

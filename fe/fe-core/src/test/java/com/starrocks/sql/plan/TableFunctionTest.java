@@ -14,14 +14,18 @@
 
 package com.starrocks.sql.plan;
 
+import com.starrocks.planner.TableFunctionNode;
+import com.starrocks.sql.analyzer.SemanticException;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Optional;
 
 public class TableFunctionTest extends PlanTestBase {
     @Test
     public void testSql0() throws Exception {
         String sql = "SELECT * FROM TABLE(unnest(ARRAY<INT>[1, 2, 3]))";
         String plan = getFragmentPlan(sql);
-        System.out.println(plan);
         assertContains(plan, "PLAN FRAGMENT 0\n" +
                 " OUTPUT EXPRS:2: unnest\n" +
                 "  PARTITION: UNPARTITIONED\n" +
@@ -45,7 +49,6 @@ public class TableFunctionTest extends PlanTestBase {
     public void testSql1() throws Exception {
         String sql = "SELECT x FROM TABLE(unnest(ARRAY<INT>[1, 2, 3])) t(x)";
         String plan = getFragmentPlan(sql);
-        System.out.println(plan);
         assertContains(plan, "PLAN FRAGMENT 0\n" +
                 " OUTPUT EXPRS:2: x\n" +
                 "  PARTITION: UNPARTITIONED\n" +
@@ -69,7 +72,6 @@ public class TableFunctionTest extends PlanTestBase {
     public void testSql2() throws Exception {
         String sql = "SELECT * FROM TABLE(unnest(ARRAY<INT>[1])) t0(x), TABLE(unnest(ARRAY<INT>[1, 2, 3])) t1(x)";
         String plan = getFragmentPlan(sql);
-        System.out.println(plan);
         assertContains(plan, "PLAN FRAGMENT 0\n" +
                 " OUTPUT EXPRS:2: x | 5: x\n" +
                 "  PARTITION: UNPARTITIONED\n" +
@@ -120,7 +122,6 @@ public class TableFunctionTest extends PlanTestBase {
         String sql = "SELECT * FROM TABLE(unnest(ARRAY<INT>[1])) t0(x) JOIN TABLE(unnest(ARRAY<INT>[1, 2, 3])) t1(x)" +
                 " ON t0.x=t1 .x";
         String plan = getFragmentPlan(sql);
-        System.out.println(plan);
         assertContains(plan, "PLAN FRAGMENT 0\n" +
                 " OUTPUT EXPRS:2: x | 5: x\n" +
                 "  PARTITION: UNPARTITIONED\n" +
@@ -238,5 +239,123 @@ public class TableFunctionTest extends PlanTestBase {
                 "  |    \n" +
                 "  0:OlapScanNode\n" +
                 "     TABLE: t2");
+    }
+
+    @Test
+    public void testTableFunctionAlias() throws Exception {
+        String sql = "select t.*, unnest from test_all_type t, unnest(split(t1a, ','))";
+        String plan = getFragmentPlan(sql);
+        assertContains(plan, "TableValueFunction");
+
+        sql = "select table_function_unnest.*, unnest from test_all_type table_function_unnest, unnest(split(t1a, ','))";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "TableValueFunction");
+
+        sql = "select t.*, unnest from test_all_type t, unnest(split(t1a, ',')) unnest";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "TableValueFunction");
+
+        sql = "select t.*, unnest.v1, unnest.v2 from (select * from test_all_type join t0_not_null) t, " +
+                "unnest(split(t1a, ','), v3) as unnest (v1, v2)";
+        plan = getFragmentPlan(sql);
+        assertContains(plan, "TableValueFunction");
+
+        Exception e = Assert.assertThrows(SemanticException.class, () -> {
+            String sql1 = "select table_function_unnest.*, unnest.v1, unnest.v2 from " +
+                    "(select * from test_all_type join t0_not_null) " +
+                    "table_function_unnest, unnest(split(t1a, ','))";
+            getFragmentPlan(sql1);
+        });
+
+        Assert.assertTrue(e.getMessage().contains("Not unique table/alias: 'table_function_unnest'"));
+    }
+
+    @Test
+    public void testRewrite() throws Exception {
+        String sql = "SELECT k1,  unnest AS c3\n" +
+                "    FROM test_agg,unnest(bitmap_to_array(b1)) ORDER BY k1 ASC, c3 ASC\n" +
+                "LIMIT 5;";
+        String plan = getFragmentPlan(sql);
+        assertContains(plan, "tableFunctionName: unnest_bitmap");
+        assertNotContains(plan, "bitmap_to_array");
+    }
+
+    @Test
+    public void testUnnesetBitmapToArrayToUnnestBitmapRewrite() throws Exception {
+        String sql = "with r1 as (select b1 as b2 from test_agg),\n" +
+                "\t r2 as (select sub_bitmap(b1, 0, 10) as b2 from test_agg),\n" +
+                "\t r3 as (select bitmap_and(t0.b2, t1.b2) as b2 from r1 t0 join r2 t1)\n" +
+                "select unnest as r1 from r3, unnest(bitmap_to_array(b2)) order by r1;";
+        String plan = getFragmentPlan(sql);
+        PlanTestBase.assertContains(plan, "5:Project\n" +
+                "  |  <slot 28> : bitmap_and(10: b1, 25: sub_bitmap)");
+        PlanTestBase.assertContains(plan, "tableFunctionName: unnest_bitmap");
+        PlanTestBase.assertNotContains(plan, "bitmap_to_array");
+    }
+
+    @Test
+    public void testUnnesetFnResultNotRequired() throws Exception {
+        Object[][] testCaseList = new Object[][] {
+                {
+                        "select t.* from test_all_type t, unnest(split(t1a, ','))",
+                        false
+                },
+                {
+                        "select t.*, unnest from test_all_type t, unnest(split(t1a, ','))",
+                        true
+                },
+                {
+                        "SELECT y FROM TABLE(generate_series(1, 2)) t(x), LATERAL generate_series(1, 5000) t2(y);",
+                        true
+                }
+        };
+
+        for (Object[] tc : testCaseList) {
+            String sql = (String) tc[0];
+            Boolean isRequired = (Boolean) tc[1];
+            System.out.println(sql);
+            ExecPlan plan = getExecPlan(sql);
+
+            Optional<TableFunctionNode> optTableFuncNode = plan.getFragments()
+                    .stream()
+                    .flatMap(fragment -> fragment.collectNodes().stream())
+                    .filter(planNode -> planNode instanceof TableFunctionNode)
+                    .map(planNode -> (TableFunctionNode) planNode)
+                    .findFirst();
+            Assert.assertTrue(optTableFuncNode.isPresent());
+            Assert.assertEquals(optTableFuncNode.get().isFnResultRequired(), isRequired);
+        }
+    }
+
+    @Test
+    public void testUnnesetFnResultNotRequired2() throws Exception {
+        String sql = "WITH `CTE` AS\n" +
+                "  (SELECT\n" +
+                "     `T2`.`a` AS `a`,\n" +
+                "     NOT(((`T`.`v1`) IS NULL)) AS `b`\n" +
+                "   FROM\n" +
+                "     `t0` AS `T`,\n" +
+                "     UNNEST([\"A\",\"B\",\"C\",\"D\"]) AS T2(`a`))\n" +
+                "SELECT\n" +
+                "  (CASE\n" +
+                "       WHEN `a` = \"A\"\n" +
+                "            AND `a` = \"B\" THEN \"A and B\"\n" +
+                "       WHEN `a` = \"A\" THEN \"A only\"\n" +
+                "       WHEN `a` = \"B\" THEN \"B only\"\n" +
+                "       ELSE \"None\"\n" +
+                "   END),\n" +
+                "  `b`\n" +
+                "FROM `CTE`\n" +
+                "LIMIT 50;";
+        ExecPlan plan = getExecPlan(sql);
+
+        Optional<TableFunctionNode> optTableFuncNode = plan.getFragments()
+                .stream()
+                .flatMap(fragment -> fragment.collectNodes().stream())
+                .filter(planNode -> planNode instanceof TableFunctionNode)
+                .map(planNode -> (TableFunctionNode) planNode)
+                .findFirst();
+        Assert.assertTrue(optTableFuncNode.isPresent());
+        Assert.assertEquals(optTableFuncNode.get().isFnResultRequired(), true);
     }
 }

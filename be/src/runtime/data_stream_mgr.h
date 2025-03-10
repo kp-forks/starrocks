@@ -46,7 +46,6 @@
 #include "common/object_pool.h"
 #include "common/status.h"
 #include "gen_cpp/Types_types.h" // for TUniqueId
-#include "gen_cpp/doris_internal_service.pb.h"
 #include "runtime/descriptors.h" // for PlanNodeId
 #include "runtime/local_pass_through_buffer.h"
 #include "runtime/mem_tracker.h"
@@ -84,6 +83,7 @@ class PTransmitChunkParams;
 class DataStreamMgr {
 public:
     DataStreamMgr();
+    ~DataStreamMgr();
 
     // Create a receiver for a specific fragment_instance_id/node_id destination;
     // If is_merging is true, the receiver maintains a separate queue of incoming row
@@ -93,8 +93,7 @@ public:
     // caller.
     std::shared_ptr<DataStreamRecvr> create_recvr(RuntimeState* state, const RowDescriptor& row_desc,
                                                   const TUniqueId& fragment_instance_id, PlanNodeId dest_node_id,
-                                                  int num_senders, int buffer_size,
-                                                  const std::shared_ptr<RuntimeProfile>& profile, bool is_merging,
+                                                  int num_senders, int buffer_size, bool is_merging,
                                                   std::shared_ptr<QueryStatisticsRecvr> sub_plan_query_statistics_recvr,
                                                   bool is_pipeline, int32_t degree_of_parallelism, bool keep_order);
 
@@ -118,7 +117,7 @@ private:
     // map from hash value of fragment instance id/node id pair to stream receivers;
     // Ownership of the stream revcr is shared between this instance and the caller of
     // create_recvr().
-    typedef phmap::flat_hash_map<PlanNodeId, std::shared_ptr<DataStreamRecvr>> RecvrMap;
+    typedef phmap::flat_hash_map<PlanNodeId, std::shared_ptr<DataStreamRecvr>, StdHash<PlanNodeId>> RecvrMap;
     typedef phmap::flat_hash_map<TUniqueId, std::shared_ptr<RecvrMap>> StreamMap;
     StreamMap _receiver_map[BUCKET_NUM];
     std::atomic<uint32_t> _fragment_count{0};
@@ -129,7 +128,7 @@ private:
     std::shared_ptr<DataStreamRecvr> find_recvr(const TUniqueId& fragment_instance_id, PlanNodeId node_id);
 
     // Remove receiver block for fragment_instance_id/node_id from the map.
-    Status deregister_recvr(const TUniqueId& fragment_instance_id, PlanNodeId node_id);
+    void deregister_recvr(const TUniqueId& fragment_instance_id, PlanNodeId node_id);
 
     inline uint32_t get_bucket(const TUniqueId& fragment_instance_id);
 

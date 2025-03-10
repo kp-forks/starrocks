@@ -26,6 +26,7 @@ import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -38,6 +39,12 @@ public class LogicalValuesOperator extends LogicalOperator {
         super(OperatorType.LOGICAL_VALUES);
         this.columnRefSet = columnRefSet;
         this.rows = rows;
+    }
+
+    public LogicalValuesOperator(List<ColumnRefOperator> columnRefSet) {
+        super(OperatorType.LOGICAL_VALUES);
+        this.columnRefSet = columnRefSet;
+        this.rows = Collections.emptyList();
     }
 
     private LogicalValuesOperator() {
@@ -110,5 +117,16 @@ public class LogicalValuesOperator extends LogicalOperator {
             builder.rows = valuesOperator.rows;
             return this;
         }
+
+        public Builder setColumnRefSet(List<ColumnRefOperator> columnRefSet) {
+            builder.columnRefSet = columnRefSet;
+            return this;
+        }
+
+        public Builder setRows(List<List<ScalarOperator>> rows) {
+            builder.rows = rows;
+            return this;
+        }
+        
     }
 }

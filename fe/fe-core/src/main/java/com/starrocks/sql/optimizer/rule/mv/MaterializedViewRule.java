@@ -45,7 +45,6 @@ import com.starrocks.sql.optimizer.operator.logical.LogicalProjectOperator;
 import com.starrocks.sql.optimizer.operator.logical.LogicalRepeatOperator;
 import com.starrocks.sql.optimizer.operator.pattern.Pattern;
 import com.starrocks.sql.optimizer.operator.scalar.CallOperator;
-import com.starrocks.sql.optimizer.operator.scalar.CaseWhenOperator;
 import com.starrocks.sql.optimizer.operator.scalar.CastOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
@@ -59,6 +58,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.starrocks.sql.optimizer.rule.mv.MaterializedViewRewriter.isCaseWhenScalarOperator;
 
 /**
  * Select best materialized view for olap scan node
@@ -194,15 +195,15 @@ public class MaterializedViewRule extends Rule {
         Map<String, Integer> queryScanNodeColumnNameToIds = queryRelIdToColumnNameIds.get(relationId);
 
         Iterator<MaterializedIndexMeta> iterator = candidateIndexIdToMeta.iterator();
+        // Consider all IndexMetas of the base table so can be decided by cost strategy for better performance.
+        // eg:
+        // tbl1     : <a int, b  string, c string> and column `a` is short key
+        // tbl1_mv  : select b, a, c from tbl1 and column `b` is short key
+        // Q1: select * from tbl1 where a = 1, should choose tbl1
+        // Q2: select * from tbl1 where b = 'a', should choose tbl1_mv
         while (iterator.hasNext()) {
             MaterializedIndexMeta mvMeta = iterator.next();
             long mvIdx = mvMeta.getIndexId();
-
-            // Ignore original query index.
-            if (mvIdx == scanOperator.getSelectedIndexId()) {
-                iterator.remove();
-                continue;
-            }
 
             // Ignore indexes which cannot be remapping with query by column names.
             List<Column> mvNonAggregatedColumns = mvMeta.getNonAggregatedColumns();
@@ -499,10 +500,11 @@ public class MaterializedViewRule extends Rule {
     private long selectBestRowCountIndex(Set<Long> indexesMatchingBestPrefixIndex, OlapTable olapTable) {
         long minRowCount = Long.MAX_VALUE;
         long selectedIndexId = 0;
+        long baseIndexId = olapTable.getBaseIndexId();
         for (Long indexId : indexesMatchingBestPrefixIndex) {
             long rowCount = 0;
             for (Partition partition : olapTable.getPartitions()) {
-                rowCount += partition.getIndex(indexId).getRowCount();
+                rowCount += partition.getDefaultPhysicalPartition().getIndex(indexId).getRowCount();
             }
             if (rowCount < minRowCount) {
                 minRowCount = rowCount;
@@ -511,7 +513,11 @@ public class MaterializedViewRule extends Rule {
                 // check column number, select one minimum column number
                 int selectedColumnSize = olapTable.getSchemaByIndexId(selectedIndexId).size();
                 int currColumnSize = olapTable.getSchemaByIndexId(indexId).size();
-                if (currColumnSize < selectedColumnSize) {
+                // If indexId and old selectedIndexId both have the same rowCount and columnSize,
+                // prefer non baseIndexId first.
+                if (currColumnSize == selectedColumnSize) {
+                    selectedIndexId = (indexId == baseIndexId) ? selectedIndexId : indexId;
+                } else if (currColumnSize < selectedColumnSize) {
                     selectedIndexId = indexId;
                 }
             }
@@ -799,6 +805,10 @@ public class MaterializedViewRule extends Rule {
         builder.put(FunctionSet.MAX, FunctionSet.MAX);
         builder.put(FunctionSet.MIN, FunctionSet.MIN);
         builder.put(FunctionSet.SUM, FunctionSet.COUNT);
+        builder.put(FunctionSet.BITMAP_AGG, FunctionSet.BITMAP_UNION);
+        builder.put(FunctionSet.BITMAP_AGG, FunctionSet.BITMAP_UNION_COUNT);
+        builder.put(FunctionSet.BITMAP_AGG, FunctionSet.MULTI_DISTINCT_COUNT);
+        builder.put(FunctionSet.BITMAP_UNION, FunctionSet.BITMAP_AGG);
         builder.put(FunctionSet.BITMAP_UNION, FunctionSet.BITMAP_UNION);
         builder.put(FunctionSet.BITMAP_UNION, FunctionSet.BITMAP_UNION_COUNT);
         builder.put(FunctionSet.BITMAP_UNION, FunctionSet.MULTI_DISTINCT_COUNT);
@@ -842,7 +852,7 @@ public class MaterializedViewRule extends Rule {
 
         if (!queryFnChild0.isColumnRef()) {
             IsNoCallChildrenValidator validator = new IsNoCallChildrenValidator(keyColumns, aggregateColumns);
-            if (!(isSupportScalarOperator(queryFnChild0) && queryFnChild0.accept(validator, null))) {
+            if (!(isCaseWhenScalarOperator(queryFnChild0) && queryFnChild0.accept(validator, null))) {
                 ColumnRefOperator mvColumnRef = factory.getColumnRef(mvColumnFnChild0.getUsedColumns().getFirstId());
                 Column mvColumn = factory.getColumn(mvColumnRef);
                 if (mvColumn.getDefineExpr() != null && mvColumn.getDefineExpr() instanceof FunctionCallExpr &&
@@ -864,7 +874,7 @@ public class MaterializedViewRule extends Rule {
             return true;
         }
 
-        if (isSupportScalarOperator(queryFnChild0)) {
+        if (isCaseWhenScalarOperator(queryFnChild0)) {
             int[] queryColumnIds = queryFnChild0.getUsedColumns().getColumnIds();
             Set<Integer> mvColumnIdSet = usedBaseColumnIds.stream()
                     .collect(Collectors.toSet());
@@ -913,14 +923,5 @@ public class MaterializedViewRule extends Rule {
             this.mvColumnRef = mvColumnRef;
             this.mvColumn = mvColumn;
         }
-    }
-
-    private boolean isSupportScalarOperator(ScalarOperator operator) {
-        if (operator instanceof CaseWhenOperator) {
-            return true;
-        }
-
-        return operator instanceof CallOperator &&
-                FunctionSet.IF.equalsIgnoreCase(((CallOperator) operator).getFnName());
     }
 }

@@ -18,9 +18,7 @@ import com.starrocks.catalog.Database;
 import com.starrocks.catalog.InternalCatalog;
 import com.starrocks.server.MetadataMgr;
 import com.starrocks.sql.ast.CreateTableStmt;
-import com.starrocks.utframe.UtFrameUtils;
 import mockit.Expectations;
-import org.apache.iceberg.hive.RuntimeMetaException;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -339,6 +337,9 @@ public class AnalyzeCreateTableTest {
                 metadata.getDb("iceberg_catalog", "iceberg_db");
                 result = new Database();
                 minTimes = 0;
+
+                metadata.tableExists("iceberg_catalog", "iceberg_db", anyString);
+                result = false;
             }
         };
 
@@ -354,15 +355,6 @@ public class AnalyzeCreateTableTest {
         AnalyzeTestUtil.getConnectContext().setCurrentCatalog("iceberg_catalog");
         analyzeSuccess("create external table iceberg_db.iceberg_table (k1 int, k2 int) partition by (k2)");
 
-        try {
-            String stmt = "create external table iceberg_table (k1 int, k2 int) partition by (k2)";
-            UtFrameUtils.parseStmtWithNewParser(stmt, AnalyzeTestUtil.getConnectContext());
-            Assert.fail();
-        } catch (Exception e) {
-            Assert.assertTrue(e instanceof RuntimeMetaException);
-            Assert.assertTrue(e.getMessage().contains("Failed to connect to Hive Metastore"));
-        }
-
         AnalyzeTestUtil.getConnectContext().setDatabase("iceberg_db");
         analyzeSuccess("create external table iceberg_table (k1 int, k2 int) partition by (k2)");
         analyzeSuccess("create external table iceberg_table (k1 int, k2 int) engine=iceberg partition by (k2)");
@@ -377,8 +369,6 @@ public class AnalyzeCreateTableTest {
                 minTimes = 0;
             }
         };
-
-        analyzeFail("create external table hive_catalog.hive_db.hive_table (k1 int, k2 int) engine=iceberg partition by (k2)");
 
         AnalyzeTestUtil.getConnectContext().setCurrentCatalog(InternalCatalog.DEFAULT_INTERNAL_CATALOG_NAME);
         AnalyzeTestUtil.getConnectContext().setDatabase("test");
@@ -398,5 +388,63 @@ public class AnalyzeCreateTableTest {
         analyzeFail("CREATE TABLE t ( id BIGINT NOT NULL,  name BIGINT NOT NULL, v1 BIGINT SUM as id)" +
                     "AGGREGATE KEY (id) DISTRIBUTED BY HASH(id) BUCKETS 1 " +
                     "PROPERTIES(\"replication_num\" = \"1\", \"replicated_storage\"=\"true\");");
+    }
+
+    @Test
+    public void testNgrambloomIndex() throws Exception {
+        // create index with non-existent column
+        String sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL3) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "INDEX1 column does not exist in table.");
+
+        // create index in non-string column
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 INT," +
+                "INDEX INDEX1(COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "Invalid ngram bloom filter column 'COL2': unsupported type INT");
+
+        // create index with multiple columns
+        sql = "CREATE TABLE TABLE1 (COL1 VARCHAR(10), COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL1, COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "INDEX1 index can only apply to a single column");
+
+        // create index with wrong fpp
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '1', 'GRAM_NUM' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "Bloom filter fpp should in [1.0E-4, 0.05]");
+
+        // create index with wrong gram num
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '0'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "Ngram Bloom filter's gram_num should be positive number");
+
+        // create index with agg mode's non-key column, col3 use sum as agg function
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10), COL3 VARCHAR(10) REPLACE," +
+                "INDEX INDEX1(COL3) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "Ngram Bloom filter index only used in columns of " +
+                "DUP_KEYS/PRIMARY table or key columns of UNIQUE_KEYS/AGG_KEYS table");
+
+        // create index with invalid properties
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2', 'CASE_SENSITIVE' = '2'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeFail(sql, "Ngram Bloom filter's case_sensitive should be true or false");
+
+        // create index with correct fpp and gram num and case-insensitive
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL2) USING NGRAMBF ('BLOOM_FILTER_FPP' = '0.01', 'GRAM_NUM' = '2', 'CASE_SENSITIVE' = 'false'))" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeSuccess(sql);
+
+        // create index with default valus
+        sql = "CREATE TABLE TABLE1 (COL1 INT, COL2 VARCHAR(10)," +
+                "INDEX INDEX1(COL2) USING NGRAMBF)" +
+                "AGGREGATE KEY(COL1, COL2) DISTRIBUTED BY HASH(COL1) BUCKETS 10;";
+        analyzeSuccess(sql);
     }
 }

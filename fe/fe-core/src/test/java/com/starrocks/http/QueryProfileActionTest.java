@@ -14,12 +14,33 @@
 package com.starrocks.http;
 
 import com.starrocks.http.action.QueryProfileAction;
+import okhttp3.Request;
+import okhttp3.Response;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 
-public class QueryProfileActionTest {
+public class QueryProfileActionTest extends StarRocksHttpTestCase {
+
+    private static final String QUERY_PLAN_URI = "/query_profile";
+
+    private void sendHttp() throws IOException {
+        Request request = new Request.Builder()
+                .get()
+                .addHeader("Authorization", rootAuth)
+                .url("http://localhost:" + HTTP_PORT + QUERY_PLAN_URI + "?query_id=<>")
+                .build();
+        Response response = networkClient.newCall(request).execute();
+        String respStr = response.body().string();
+        Assert.assertTrue(respStr.contains("query id &lt;&gt; not found."));
+    }
+
+    @Test
+    public void testQueryProfile() throws IOException {
+        sendHttp();
+    }
 
     @Test
     public void testEscapeHtmlInPreTag() throws Exception {
@@ -44,7 +65,7 @@ public class QueryProfileActionTest {
                 "     - Sql Statement: select count(s_suppkey), count(s_name), count(s_address), count(s_city), " +
                 "count(s_nation), count(s_region), count(s_phone), count(lo_revenue), count(lo_shipmode), " +
                 "count(lo_quantity), count(lo_partkey), count(lo_discount) from lineorder join supplier on " +
-                "lo_suppkey=s_suppkey and lo_partkey<s_suppkey\n" +
+                "lo_suppkey=s_suppkey and lo_partkey<s_suppkey and lo_quantity>100\n" +
                 "     - Variables: parallel_fragment_exec_instance_num=1,max_parallel_scan_instance_num=-1," +
                 "pipeline_dop=0,enable_adaptive_sink_dop=true,enable_runtime_adaptive_dop=false," +
                 "runtime_profile_report_interval=10\n" +
@@ -67,7 +88,7 @@ public class QueryProfileActionTest {
                 "     - Sql Statement: select count(s_suppkey), count(s_name), count(s_address), count(s_city), " +
                 "count(s_nation), count(s_region), count(s_phone), count(lo_revenue), count(lo_shipmode), " +
                 "count(lo_quantity), count(lo_partkey), count(lo_discount) from lineorder join supplier on " +
-                "lo_suppkey=s_suppkey and lo_partkey&lt;s_suppkey\n" +
+                "lo_suppkey=s_suppkey and lo_partkey&lt;s_suppkey and lo_quantity&gt;100\n" +
                 "     - Variables: parallel_fragment_exec_instance_num=1,max_parallel_scan_instance_num=-1," +
                 "pipeline_dop=0,enable_adaptive_sink_dop=true,enable_runtime_adaptive_dop=false," +
                 "runtime_profile_report_interval=10\n" +

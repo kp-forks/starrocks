@@ -88,7 +88,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                                  capture2 = [this, &result_st](const Status& st) {
                                      std::unique_lock<std::mutex> lock(_mutex);
                                      _counter--;
-                                     VLOG(1) << "group counter is: " << _counter << ", grp: " << _grp_id;
+                                     VLOG(2) << "group counter is: " << _counter << ", grp: " << _grp_id;
                                      if (_counter == 0) {
                                          _queue.shutdown();
                                          LOG(INFO)
@@ -101,7 +101,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
             LOG(WARNING) << "failed to submit data consumer: " << consumer->id() << ", group id: " << _grp_id;
             return Status::InternalError("failed to submit data consumer");
         } else {
-            VLOG(1) << "submit a data consumer: " << consumer->id() << ", group id: " << _grp_id;
+            VLOG(2) << "submit a data consumer: " << consumer->id() << ", group id: " << _grp_id;
         }
     }
 
@@ -117,6 +117,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
 
     // copy one
     std::map<int32_t, int64_t> cmt_offset = ctx->kafka_info->cmt_offset;
+    std::map<int32_t, int64_t> cmt_offset_timestamp;
 
     //improve performance
     Status (KafkaConsumerPipe::*append_data)(const char* data, size_t size, char row_delimiter);
@@ -152,7 +153,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
             _queue.shutdown();
             // cancel all consumers
             for (auto& consumer : _consumers) {
-                consumer->cancel(ctx);
+                (void)consumer->cancel(ctx);
             }
 
             // waiting all threads finished
@@ -164,6 +165,8 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 return result_st;
             }
 
+            ctx->kafka_info->cmt_offset_timestamp = cmt_offset_timestamp;
+
             if (left_bytes == ctx->max_batch_size) {
                 // nothing to be consumed, we have to cancel it, because
                 // we do not allow finishing stream load pipe without data.
@@ -172,7 +175,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 // we need to commit and tell fe to move offset to the newest offset, otherwise, fe will retry consume.
                 for (auto& item : cmt_offset) {
                     if (item.second > ctx->kafka_info->cmt_offset[item.first]) {
-                        kafka_pipe->finish();
+                        RETURN_IF_ERROR(kafka_pipe->finish());
                         ctx->kafka_info->cmt_offset = std::move(cmt_offset);
                         ctx->receive_bytes = 0;
                         return Status::OK();
@@ -182,7 +185,7 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 return Status::Cancelled("Cancelled");
             } else {
                 DCHECK(left_bytes < ctx->max_batch_size);
-                kafka_pipe->finish();
+                RETURN_IF_ERROR(kafka_pipe->finish());
                 ctx->kafka_info->cmt_offset = std::move(cmt_offset);
                 ctx->receive_bytes = ctx->max_batch_size - left_bytes;
                 return Status::OK();
@@ -209,6 +212,10 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 // but the standard usage is to record the last offset + 1.
                 if (msg->offset() > 0) {
                     cmt_offset[msg->partition()] = msg->offset() - 1;
+                    auto timestamp = msg->timestamp();
+                    if (timestamp.type != RdKafka::MessageTimestamp::MSG_TIMESTAMP_NOT_AVAILABLE) {
+                        cmt_offset_timestamp[msg->partition()] = msg->timestamp().timestamp;
+                    }
                 }
             } else {
                 Status st = Status::OK();
@@ -218,11 +225,15 @@ Status KafkaDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                     received_rows++;
                     left_bytes -= msg->len();
                     cmt_offset[msg->partition()] = msg->offset();
+
+                    auto timestamp = msg->timestamp();
+                    if (timestamp.type != RdKafka::MessageTimestamp::MSG_TIMESTAMP_NOT_AVAILABLE) {
+                        cmt_offset_timestamp[msg->partition()] = msg->timestamp().timestamp;
+                    }
                     VLOG(3) << "consume partition[" << msg->partition() << " - " << msg->offset() << "]";
                 } else {
                     // failed to append this msg, we must stop
-                    LOG(WARNING) << "failed to append msg to pipe. grp: " << _grp_id
-                                 << ", errmsg=" << st.get_error_msg();
+                    LOG(WARNING) << "failed to append msg to pipe. grp: " << _grp_id << ", errmsg=" << st.message();
                     eos = true;
                     {
                         std::unique_lock<std::mutex> lock(_mutex);
@@ -295,7 +306,7 @@ Status PulsarDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                                  capture2 = [this, &result_st](const Status& st) {
                                      std::unique_lock<std::mutex> lock(_mutex);
                                      _counter--;
-                                     VLOG(1) << "group counter is: " << _counter << ", grp: " << _grp_id;
+                                     VLOG(2) << "group counter is: " << _counter << ", grp: " << _grp_id;
                                      if (_counter == 0) {
                                          _queue.shutdown();
                                          LOG(INFO)
@@ -308,7 +319,7 @@ Status PulsarDataConsumerGroup::start_all(StreamLoadContext* ctx) {
             LOG(WARNING) << "failed to submit data consumer: " << consumer->id() << ", group id: " << _grp_id;
             return Status::InternalError("failed to submit data consumer");
         } else {
-            VLOG(1) << "submit a data consumer: " << consumer->id() << ", group id: " << _grp_id;
+            VLOG(2) << "submit a data consumer: " << consumer->id() << ", group id: " << _grp_id;
         }
     }
 
@@ -359,7 +370,7 @@ Status PulsarDataConsumerGroup::start_all(StreamLoadContext* ctx) {
             _queue.shutdown();
             // cancel all consumers
             for (auto& consumer : _consumers) {
-                consumer->cancel(ctx);
+                (void)consumer->cancel(ctx);
             }
 
             // waiting all threads finished
@@ -378,7 +389,7 @@ Status PulsarDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 return Status::Cancelled("Cancelled");
             } else {
                 DCHECK(left_bytes < ctx->max_batch_size);
-                pulsar_pipe->finish();
+                RETURN_IF_ERROR(pulsar_pipe->finish());
                 ctx->pulsar_info->ack_offset = std::move(ack_offset);
                 ctx->receive_bytes = ctx->max_batch_size - left_bytes;
                 get_backlog_nums(ctx);
@@ -406,7 +417,7 @@ Status PulsarDataConsumerGroup::start_all(StreamLoadContext* ctx) {
                 VLOG(3) << "consume partition" << partition << " - " << msg_id;
             } else {
                 // failed to append this msg, we must stop
-                LOG(WARNING) << "failed to append msg to pipe. grp: " << _grp_id << ", errmsg=" << st.get_error_msg();
+                LOG(WARNING) << "failed to append msg to pipe. grp: " << _grp_id << ", errmsg=" << st.message();
                 eos = true;
                 {
                     std::unique_lock<std::mutex> lock(_mutex);
@@ -440,7 +451,7 @@ void PulsarDataConsumerGroup::get_backlog_nums(StreamLoadContext* ctx) {
         int64_t backlog_num;
         Status st = std::static_pointer_cast<PulsarDataConsumer>(consumer)->get_partition_backlog(&backlog_num);
         if (!st.ok()) {
-            LOG(WARNING) << st.get_error_msg();
+            LOG(WARNING) << st.message();
         } else {
             ctx->pulsar_info
                     ->partition_backlog[std::static_pointer_cast<PulsarDataConsumer>(consumer)->get_partition()] =

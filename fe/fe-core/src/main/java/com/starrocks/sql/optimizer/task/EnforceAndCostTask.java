@@ -28,10 +28,10 @@ import com.starrocks.sql.optimizer.RequiredPropertyDeriver;
 import com.starrocks.sql.optimizer.Utils;
 import com.starrocks.sql.optimizer.base.CTEProperty;
 import com.starrocks.sql.optimizer.base.ColumnRefSet;
-import com.starrocks.sql.optimizer.base.DistributionProperty;
 import com.starrocks.sql.optimizer.base.DistributionSpec;
+import com.starrocks.sql.optimizer.base.EmptyDistributionProperty;
+import com.starrocks.sql.optimizer.base.EmptySortProperty;
 import com.starrocks.sql.optimizer.base.PhysicalPropertySet;
-import com.starrocks.sql.optimizer.base.SortProperty;
 import com.starrocks.sql.optimizer.cost.CostModel;
 import com.starrocks.sql.optimizer.operator.OperatorType;
 import com.starrocks.sql.optimizer.operator.physical.PhysicalCTEConsumeOperator;
@@ -122,6 +122,17 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
             return;
         }
 
+        if (context.getOptimizerContext().getSessionVariable().isEnableMaterializedViewForceRewrite() &&
+                groupExpression.getGroup().hasMVGroupExpression()) {
+            if (!groupExpression.hasAppliedMVRules()) {
+                return;
+            } else {
+                // When the group expression is derived from mv-rewrite rules and force rewrite is on,
+                // invalid all existed group expressions by set max cost.
+                groupExpression.getGroup().forceChooseMVExpression(context);
+            }
+        }
+
         // Init costs and get required properties for children
         initRequiredProperties();
 
@@ -145,6 +156,7 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
                 if (childBestExpr == null && prevChildIndex >= curChildIndex) {
                     // If there can not find best child expr or push child's OptimizeGroupTask, The child has been
                     // pruned because of UpperBound cost prune, and parent task can break here and return
+                    recordLowerBoundCost(context.getUpperBoundCost() + 1);
                     break;
                 }
 
@@ -173,6 +185,7 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
 
                 curTotalCost += childBestExpr.getCost(childRequiredProperty);
                 if (curTotalCost > context.getUpperBoundCost()) {
+                    recordLowerBoundCost(curTotalCost);
                     break;
                 }
             }
@@ -190,11 +203,11 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
                 curTotalCost = childOutputPropertyGuarantor.enforceLegalChildOutputProperty();
 
                 if (curTotalCost > context.getUpperBoundCost()) {
+                    recordLowerBoundCost(curTotalCost);
                     break;
                 }
 
-                // update current group statistics and re-compute costs
-                if (!computeCurrentGroupStatistics()) {
+                if (!checkCurrentGroupStatistics()) {
                     // child group has been pruned
                     return;
                 }
@@ -212,6 +225,10 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
             childrenBestExprList.clear();
             childrenOutputProperties.clear();
         }
+    }
+
+    private void recordLowerBoundCost(double cost) {
+        groupExpression.getGroup().setCostLowerBound(context.getRequiredProperty(), cost);
     }
 
     private boolean checkCTEPropertyValid(GroupExpression groupExpression, PhysicalPropertySet requiredPropertySet) {
@@ -388,7 +405,7 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
                 return false;
             }
             // 1.2 disable one stage agg with distinct aggregate
-            if (distinctAggCallOperator.size() > 0) {
+            if (!distinctAggCallOperator.isEmpty()) {
                 return false;
             }
             // 1.3 disable one stage agg with multi group by columns
@@ -397,8 +414,9 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
         return true;
     }
 
-    private boolean computeCurrentGroupStatistics() {
+    private boolean checkCurrentGroupStatistics() {
         if (groupExpression.getInputs().stream().anyMatch(group -> group.getStatistics() == null)) {
+            Preconditions.checkState(false);
             return false;
         }
 
@@ -457,7 +475,7 @@ public class EnforceAndCostTask extends OptimizerTask implements Cloneable {
                  * because repartition require sort again
                  */
                 PhysicalPropertySet newProperty =
-                        new PhysicalPropertySet(DistributionProperty.EMPTY, SortProperty.EMPTY,
+                        new PhysicalPropertySet(EmptyDistributionProperty.INSTANCE, EmptySortProperty.INSTANCE,
                                 outputProperty.getCteProperty());
                 groupExpression.getGroup().replaceBestExpressionProperty(outputProperty, newProperty,
                         groupExpression.getCost(outputProperty));

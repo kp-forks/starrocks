@@ -41,7 +41,6 @@ import com.starrocks.common.Config;
 import com.starrocks.common.Log4jConfig;
 import com.starrocks.common.ThreadPoolManager;
 import com.starrocks.common.Version;
-import com.starrocks.common.util.JdkUtils;
 import com.starrocks.ha.StateChangeExecutor;
 import com.starrocks.http.HttpServer;
 import com.starrocks.journal.Journal;
@@ -49,14 +48,16 @@ import com.starrocks.journal.bdbje.BDBEnvironment;
 import com.starrocks.journal.bdbje.BDBJEJournal;
 import com.starrocks.journal.bdbje.BDBTool;
 import com.starrocks.journal.bdbje.BDBToolOptions;
+import com.starrocks.lake.snapshot.RestoreClusterSnapshotMgr;
 import com.starrocks.leader.MetaHelper;
 import com.starrocks.qe.CoordinatorMonitor;
 import com.starrocks.qe.QeService;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.server.RunMode;
 import com.starrocks.service.ExecuteEnv;
-import com.starrocks.service.FeServer;
 import com.starrocks.service.FrontendOptions;
+import com.starrocks.service.FrontendThriftServer;
+import com.starrocks.service.arrow.flight.sql.ArrowFlightSqlService;
 import com.starrocks.staros.StarMgrServer;
 import org.apache.commons.cli.BasicParser;
 import org.apache.commons.cli.CommandLine;
@@ -108,18 +109,19 @@ public class StarRocksFE {
             // init config
             new Config().init(starRocksDir + "/conf/fe.conf");
 
-            // check it after Config is initialized, otherwise the config 'check_java_version' won't work.
-            if (!JdkUtils.checkJavaVersion()) {
-                throw new IllegalArgumentException("Java version doesn't match");
-            }
+            // check command line options
+            // NOTE: do it before init log4jConfig to avoid unnecessary stdout messages
+            checkCommandLineOptions(cmdLineOpts);
 
             Log4jConfig.initLogging();
+            // We have already output the caffine's error message to Log4j2.
+            // we turn off the java.util.logging.Logger of caffine to reduce the output log of the console
+            java.util.logging.Logger.getLogger("com.github.benmanes.caffeine").setLevel(java.util.logging.Level.OFF);
 
             // set dns cache ttl
             java.security.Security.setProperty("networkaddress.cache.ttl", "60");
 
-            // check command line options
-            checkCommandLineOptions(cmdLineOpts);
+            RestoreClusterSnapshotMgr.init(starRocksDir + "/conf/cluster_snapshot.yaml", args);
 
             // check meta dir
             MetaHelper.checkMetaDir();
@@ -132,10 +134,7 @@ public class StarRocksFE {
             // init globalStateMgr
             GlobalStateMgr.getCurrentState().initialize(args);
 
-            StateChangeExecutor.getInstance().setMetaContext(
-                    GlobalStateMgr.getCurrentState().getMetaContext());
-
-            if (RunMode.allowCreateLakeTable()) {
+            if (RunMode.isSharedDataMode()) {
                 Journal journal = GlobalStateMgr.getCurrentState().getJournal();
                 if (journal instanceof BDBJEJournal) {
                     BDBEnvironment bdbEnvironment = ((BDBJEJournal) journal).getBdbEnvironment();
@@ -164,32 +163,26 @@ public class StarRocksFE {
 
             // init and start:
             // 1. QeService for MySQL Server
-            // 2. FeServer for Thrift Server
+            // 2. FrontendThriftServer for Thrift Server
             // 3. HttpServer for HTTP Server
-            QeService qeService = new QeService(Config.query_port, Config.mysql_service_nio_enabled,
-                    ExecuteEnv.getInstance().getScheduler());
-            FeServer feServer = new FeServer(Config.rpc_port);
+            // 4. ArrowFlightSqlService for Arrow Flight Sql Server
+            QeService qeService = new QeService(Config.query_port, ExecuteEnv.getInstance().getScheduler());
+            FrontendThriftServer frontendThriftServer = new FrontendThriftServer(Config.rpc_port);
             HttpServer httpServer = new HttpServer(Config.http_port);
+            ArrowFlightSqlService arrowFlightSqlService = new ArrowFlightSqlService(Config.arrow_flight_port);
+
             httpServer.setup();
 
-            feServer.start();
+            frontendThriftServer.start();
             httpServer.start();
             qeService.start();
+            arrowFlightSqlService.start();
 
             ThreadPoolManager.registerAllThreadPoolMetric();
 
             addShutdownHook();
 
-            // To resolve: "Multiple HTTP implementations were found on the classpath. To avoid non-deterministic
-            // loading implementations, please explicitly provide an HTTP client via the client builders, set
-            // the software.amazon.awssdk.http.service.impl system property with the FQCN of the HTTP service to
-            // use as the default, or remove all but one HTTP implementation from the classpath"
-            // Currently, there are 2 implements of HTTP client: ApacheHttpClient and UrlConnectionHttpClient
-            // The UrlConnectionHttpClient is introduced by #16602, and it causes the exception.
-            // So we set the default HTTP client to UrlConnectionHttpClient.
-            // TODO: remove this after we remove ApacheHttpClient
-            System.setProperty("software.amazon.awssdk.http.service.impl",
-                    "software.amazon.awssdk.http.urlconnection.UrlConnectionSdkHttpService");
+            RestoreClusterSnapshotMgr.finishRestoring();
 
             LOG.info("FE started successfully");
 
@@ -233,6 +226,7 @@ public class StarRocksFE {
         CommandLineParser commandLineParser = new BasicParser();
         Options options = new Options();
         options.addOption("ht", "host_type", false, "Specify fe start use ip or fqdn");
+        options.addOption("rs", "cluster_snapshot", false, "Specify fe start to restore from a cluster snapshot");
         options.addOption("v", "version", false, "Print the version of StarRocks Frontend");
         options.addOption("h", "helper", true, "Specify the helper node when joining a bdb je replication group");
         options.addOption("b", "bdb", false, "Run bdbje debug tools");
@@ -249,7 +243,7 @@ public class StarRocksFE {
         try {
             cmd = commandLineParser.parse(options, args);
         } catch (final ParseException e) {
-            LOG.error(e);
+            LOG.error(e.getMessage(), e);
             System.err.println("Failed to parse command line. exit now");
             System.exit(-1);
         }
@@ -335,11 +329,13 @@ public class StarRocksFE {
             System.out.println("Commit hash: " + Version.STARROCKS_COMMIT_HASH);
             System.out.println("Build type: " + Version.STARROCKS_BUILD_TYPE);
             System.out.println("Build time: " + Version.STARROCKS_BUILD_TIME);
+            System.out.println("Build distributor id: " + Version.STARROCKS_BUILD_DISTRO_ID);
+            System.out.println("Build arch: " + Version.STARROCKS_BUILD_ARCH);
             System.out.println("Build user: " + Version.STARROCKS_BUILD_USER + "@" + Version.STARROCKS_BUILD_HOST);
             System.out.println("Java compile version: " + Version.STARROCKS_JAVA_COMPILE_VERSION);
             System.exit(0);
         } else if (cmdLineOpts.runBdbTools()) {
-            
+
             BDBTool bdbTool = new BDBTool(BDBEnvironment.getBdbDir(), cmdLineOpts.getBdbToolOpts());
             if (bdbTool.run()) {
                 System.exit(0);
